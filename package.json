@@ -1,0 +1,31 @@
+{
+  "name": "apcsp-create-project---final",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "server": "nodemon --watch server.js --watch webpack.config.js server.js",
+    "webpack": "webpack serve --mode development"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "cookie-parser": "^1.4.6",
+    "express": "^4.18.2",
+    "lodash": "^4.17.21",
+    "nodemon": "^3.0.2",
+    "phaser": "^3.70.0",
+    "socket.io": "^4.7.4",
+    "socket.io-client": "^4.7.4",
+    "webpack": "^5.89.0",
+    "webpack-dev-middleware": "^7.0.0",
+    "webpack-dev-server": "^4.15.1",
+    "webpack-hot-middleware": "^2.26.0"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.23.7",
+    "@babel/preset-env": "^7.23.8",
+    "babel-loader": "^9.1.3",
+    "webpack-cli": "^5.1.4"
+  }
+}

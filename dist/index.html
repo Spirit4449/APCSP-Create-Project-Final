@@ -1,0 +1,39 @@
+<!-- index.html -->
+
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="shortcut icon" href="assets/sword.svg" type="image/x-icon" />
+    <title>Ultimate Punch Out</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+      // This code redirects you to party.html. It fetches the endpoint of the server and creates a party
+      fetch("/party-creation", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      })
+        .then((response) => {
+          if (response.ok) {
+            return response.json();
+          } else {
+            console.error(`HTTP error! Status: ${response.status}`);
+          }
+        })
+        .then((data) => {
+          if (data && data.partyId) {
+            // Redirects to party
+            window.location = `/party/${data.partyId}`;
+          }
+        })
+        .catch((error) => {
+          // Handle errors
+          console.error("Fetch error:", error);
+        });
+    </script>
+  </head>
+  <body></body>
+</html>

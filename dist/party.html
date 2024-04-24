@@ -1,0 +1,291 @@
+<!-- party.html -->
+
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="shortcut icon" href="/assets/sword.svg" type="image/x-icon" />
+    <title>Ultimate Punch Out</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Poppins:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&family=Press+Start+2P&display=swap"
+      rel="stylesheet"
+    />
+    <script src="/socket.io/socket.io.js"></script>
+  </head>
+  <style>
+    body {
+      margin: 0;
+      background-color: rgb(81, 168, 255);
+      font-family: "Poppins", sans-serif;
+    }
+
+    .flex {
+      display: flex;
+      align-items: center;
+    }
+    h2 {
+      margin-left: 10px;
+    }
+    h3 {
+      margin: 0;
+      font-weight: 200;
+    }
+    #navbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      width: 100%;
+      top: 0;
+      height: 50px;
+      padding: 2px 10px;
+      box-sizing: border-box;
+      background-color: rgb(36, 36, 36);
+      color: white;
+    }
+
+    .button {
+      padding: 5px 10px;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+
+    #party {
+      height: 35px;
+      background-color: #c5c55a;
+      border-radius: 5px;
+      padding: 0px 10px;
+      box-sizing: border-box;
+      color: black;
+      margin-left: 15px;
+      cursor: pointer;
+      transition: background-color 0.5s ease;
+    }
+    #party:hover {
+      background-color: #abab4c;
+    }
+
+    #party-members {
+      position: absolute;
+      width: 80%;
+      height: 70%;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -55%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    table {
+      height: 200px;
+      min-height: 140px;
+      padding: 0;
+      border-radius: 10px;
+      overflow: hidden;
+    }
+
+    tr {
+      background-color: #3b3b3b;
+      border-radius: 6px;
+    }
+
+    td {
+      padding: 0;
+      border: 7px solid #000000;
+      border-radius: 10px;
+      box-sizing: border-box;
+      position: relative; /* Position relative for absolute positioning */
+      cursor: grab;
+      width: 300px;
+    }
+
+    .player-display {
+      background-color: #1181ea;
+    }
+
+    .op-display {
+      background-color: #de3838;
+    }
+
+    .icon {
+      text-align: center; /* Center the image */
+      position: relative; /* Position relative for absolute positioning */
+    }
+
+    .status {
+      background-color: rgb(0, 0, 0);
+      color: #ff5252;
+      font-weight: 600;
+      font-size: 20px;
+      text-align: center;
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      height: 20%;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    #op-team {
+      margin-top: auto;
+    }
+
+    .username {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: absolute;
+      top: 0;
+      left: 50%; /* Center horizontally */
+      transform: translateX(-50%); /* Center horizontally */
+      font-size: 20px;
+      color: rgb(131, 216, 252);
+    }
+
+    #bottom-bar {
+      display: flex;
+      bottom: 0;
+      padding: 2px 5px;
+      box-sizing: border-box;
+      position: absolute;
+      width: 100%;
+      justify-content: space-between;
+    }
+
+    select select {
+      background-color: #c5c55a;
+    }
+
+    .dropdown {
+      border-radius: 6px;
+      border: 3px solid black;
+      padding: 15px 25px;
+      font-size: 30px;
+      font-weight: 700;
+      font-family: "Poppins", sans-serif;
+      cursor: pointer;
+      outline: none;
+      transition: background-color 0.2s ease;
+    }
+    #character {
+      background-color: #4da1dc;
+    }
+    #character:hover {
+      background-color: #3d81b1;
+    }
+    #mode {
+      background-color: #49d15d;
+    }
+    #mode:hover {
+      background-color: #58b237;
+    }
+    #map {
+      background-color: #ce9635;
+    }
+    #map:hover {
+      background-color: #9f9814;
+    }
+
+    #ready {
+      background-color: #eac809;
+      border-radius: 6px;
+      border: 3px solid black;
+      padding: 15px 25px;
+      font-size: 30px;
+      font-weight: 700;
+      font-family: "Poppins", sans-serif;
+      cursor: pointer;
+      transition: background-color 0.2s ease;
+    }
+    #ready:hover {
+      background-color: #fae258;
+    }
+
+    #sign-out {
+      height: 35px;
+      background-color: #f0a665;
+      border-radius: 5px;
+      padding: 0px 10px;
+      box-sizing: border-box;
+      color: black;
+      margin-left: 10px;
+      cursor: pointer;
+      transition: background-color 0.5s ease;
+    }
+    #sign-out:hover {
+      background-color: #dc8f4b;
+    }
+    #leave {
+      background-color: rgb(220, 85, 85);
+      width: 90px;
+      height: 40px;
+      border-radius: 10px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      margin-left: 10px;
+      margin-top: 10px;
+      border: 3px solid black;
+      cursor: pointer;
+    }
+  </style>
+  <body>
+    <div id="navbar">
+      <div class="flex">
+        <img src="/assets/sword.svg" width="20px" />
+        <h2>Ultimate Punch Out</h2>
+      </div>
+      <div class="flex" id="navbar-right">
+        <h3 id="username-text"></h3>
+        <div class="flex" id="party">
+          <p>Invite others to party</p>
+          <img
+            src="/assets/copy.png"
+            alt="copy"
+            width="25px"
+            style="margin-left: 10px"
+          />
+        </div>
+        <div class="flex" id="sign-out">Sign out</div>
+      </div>
+    </div>
+    <div id="leave">
+      <p>Leave</p>
+    </div>
+    <div id="party-members">
+      <table>
+        <tr id="your-team"></tr>
+      </table>
+      <img src="/assets/vs.png" id="vs" alt="vs" width="70px" />
+      <table>
+        <tr id="op-team"></tr>
+      </table>
+    </div>
+
+    <div id="bottom-bar">
+      <select id="character" name="character" class="dropdown">
+        <option value="Ninja">Ninja</option>
+      </select>
+      <div>
+        <select id="mode" name="mode" class="dropdown">
+          <option value="1">1v1</option>
+          <option value="2">2v2</option>
+          <option value="3">3v3</option>
+        </select>
+        <select id="map" name="map" class="dropdown">
+          <option value="Lushy Peaks">Lushy Peaks</option>
+        </select>
+      </div>
+
+      <input type="submit" id="ready" value="Ready" />
+    </div>
+
+    <script src="/party.bundle.js"></script>
+  </body>
+</html>

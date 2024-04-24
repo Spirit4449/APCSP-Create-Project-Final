@@ -1,0 +1,183 @@
+<!-- game.html -->
+
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="shortcut icon" href="/assets/sword.svg" type="image/x-icon" />
+    <title>Ultimate Punch Out</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.70.0/dist/phaser.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Poppins:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&family=Press+Start+2P&display=swap"
+      rel="stylesheet"
+    />
+    <script src="/game.bundle.js"></script>
+    <style>
+      body {
+        margin: 0;
+        background-color: black;
+        overflow: hidden;
+        font-family: "Poppins", sans-serif;
+      }
+
+      canvas {
+        display: block;
+      }
+
+      #dark-overlay {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0, 0, 0, 0.363);
+        z-index: 9;
+        pointer-events: none;
+      }
+
+      #status-bar {
+        top: 0;
+        width: 100%;
+        height: 50px;
+        background-color: transparent;
+        display: flex;
+        position: absolute;
+        justify-content: space-between;
+        color: black;
+        box-sizing: border-box;
+        padding: 0px 30px;
+      }
+
+      #dead {
+        display: none;
+        position: absolute;
+        top: 10%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        color: black;
+        top: 20;
+        text-align: center;
+      }
+
+      #container {
+        position: absolute;
+        background-color: rgb(56, 52, 52);
+        border: 2px solid rgb(101, 101, 101);
+        width: 400px;
+        height: 300px;
+        padding: 20px;
+        border-radius: 10px;
+        display: none;
+        flex-direction: column;
+        align-items: center;
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        z-index: 10;
+      }
+
+      #info-container {
+        background-color: rgb(13, 13, 13);
+        width: 90%;
+        height: 100%;
+        padding: 10px 20px;
+        box-sizing: border-box;
+        border-radius: 8px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+
+      #info {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+      }
+
+      #game-over {
+        font-family: "Press Start 2P", system-ui;
+        font-size: 40px;
+        text-align: center;
+        color: #18c321;
+      }
+
+      #username-text {
+        font-size: 25px;
+        margin: 0;
+        color: rgb(232, 231, 231);
+      }
+
+      #character-text {
+        margin: 0;
+        padding-bottom: 3px;
+        font-size: 18px;
+        color: rgb(190, 190, 190);
+      }
+
+      #character-image {
+        width: 50px;
+      }
+
+      #return {
+        background-color: #8181b2;
+        padding: 15px 5px;
+        border-radius: 8px;
+        border: none;
+        cursor: pointer;
+        width: 90%;
+        font-family: "Poppins", sans-serif;
+        margin-top: 20px;
+        transition: background-color 0.2s ease;
+      }
+      #return:hover {
+        background-color: #6c6ca1;
+      }
+
+      #fight {
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        position: absolute;
+        transition: width 1s ease, opacity 1s ease;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="status-bar">
+      <p id="your-team" class="status">Your team: 1/1 players</p>
+      <p id="opposing-team" class="status">Opposing team: 1/1 players</p>
+    </div>
+    <h2 id="dead">You are dead</h2>
+    <div id="container">
+      <h1 id="game-over">Game Over</h1>
+      <div id="info-container">
+        <img id="character-image" src="/assets/ninjaIcon.png" alt="character" />
+        <div id="info">
+          <p id="username-text">Username</p>
+          <p id="character-text">Ninja</p>
+        </div>
+      </div>
+      <input
+        id="return"
+        type="button"
+        value="Return to Menu"
+        onclick="returnBack()"
+      />
+    </div>
+    <div id="dark-overlay"></div>
+
+    <img src="/assets/fightImage.png" alt="fight" width="45%" id="fight" />
+  </body>
+  <script>
+    function returnBack() {
+      // Gets the cookie called "party" that returns the party id
+      window.location.href = `/party/${sessionStorage.getItem("party")}`;
+    }
+  </script>
+</html>
