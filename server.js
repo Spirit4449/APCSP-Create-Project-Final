@@ -202,7 +202,8 @@ app.get("/matchmaking/:partyid", (req, res) => {
         // If the party is not equal to your party
         if (
           partyToFind[0]["matchmaking"] === true && // If it is in matchmaking
-          Object.keys(partyToFind).length - 1 === playersToFind // If it fulfills the player requirement
+          Object.keys(partyToFind).length - 1 === playersToFind && 
+          partyToFind[0]['map'] === parties[partyId][0]['map']  // If it fulfills the player requirement
         ) {
           // The server has found a party to matchmake with and will not enter matchmaking
 
@@ -249,6 +250,7 @@ app.get("/matchmaking/:partyid", (req, res) => {
             setSpawnProperties(party2Players, "top");
           }
 
+          const map = parties[partyId][0]["map"]
           // After 1 second, game-started will be emit. This is to give time for the players, to enter the matchmaking screen.
           setTimeout(() => {
             io.emit("game-started", {
@@ -257,6 +259,7 @@ app.get("/matchmaking/:partyid", (req, res) => {
               gameId,
               gameData: games[gameId],
               partyMembers: games[gameId][party1].length,
+              map,
             });
           }, 1000);
         } else {
@@ -272,7 +275,7 @@ app.get("/matchmaking/:partyid", (req, res) => {
 app.post("/party-creation", (req, res) => {
   const partyId = randomString(10);
   parties[partyId] = [
-    { mode: "1", map: "Lushy Peaks", matchmaking: false, gameStarted: false },
+    { mode: "1", map: "1", matchmaking: false, gameStarted: false },
   ]; // Adds the party to the parties dictionary with default values
   return res.status(200).json({ partyId });
 });
@@ -400,7 +403,7 @@ io.on("connection", (socket) => {
     // Emits death message to all users
     socket.broadcast.emit("death", data);
     // If everyone is dead
-    if (allPlayersDead) {
+    if (allPlayersDead && games[data.gameId]) {
       const gameParties = Object.keys(games[data.gameId]);
       for (const party of gameParties) {
         if (parties[party]) {
@@ -415,7 +418,7 @@ io.on("connection", (socket) => {
         losers, // If the player is not found in the losers dictionary, it will say they won
       });
       // Deletes the game from the games dicitonary
-      delete games[data.gameId];
+      //delete games[data.gameId];
     }
   });
 
@@ -545,12 +548,14 @@ io.on("connection", (socket) => {
             setSpawnProperties(party2, "top");
           }
 
+          const map = parties[data.partyId][0]["map"]
           // Emits game started
           io.emit("game-started", {
             partyId: data.partyId,
             gameId,
             gameData: games[gameId],
             partyMembers: games[gameId][data.partyId].length,
+            map,
           });
         }
       } else {

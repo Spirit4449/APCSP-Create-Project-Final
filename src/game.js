@@ -11,7 +11,8 @@
 
 // Credits to https://www.w3schools.com/js/js_cookies.asp for helping with cookie code
 
-import { createMap, base, platform, leftPlatform, rightPlatform } from "./map";
+import { lushyPeaks, lushyPeaksObjects } from "./Maps/lushyPeaks";
+import { mangroveMeadow, mangroveMeadowObjects } from "./Maps/mangroveMeadow";
 import {
   createPlayer,
   player,
@@ -36,6 +37,11 @@ const spawnPlatform = sessionStorage.getItem("spawnPlatform");
 const spawn = sessionStorage.getItem("spawn");
 const partyMembers = sessionStorage.getItem("partyMembers");
 const partyMembersNum = Number(partyMembers);
+const map = sessionStorage.getItem("map")
+
+
+// Map variale
+let mapObjects
 
 // Lists that store all the players in player team and op team
 const opponentPlayers = [];
@@ -46,6 +52,7 @@ class GameScene extends Phaser.Scene {
   // Preloads assets
   preload() {
     this.load.image("background", `${staticPath}/background.png`);
+    this.load.image("mangrove-background", `${staticPath}/mangroveBackground.jpg`);
     this.load.atlas(
       "sprite",
       `${staticPath}/Ninja_Spritesheet.png`,
@@ -59,10 +66,17 @@ class GameScene extends Phaser.Scene {
     );
     this.load.image("tiles-image", `${staticPath}/map.png`);
     this.load.tilemapTiledJSON("tiles", `${staticPath}/tilesheet.json`);
-    this.load.image("box", `${staticPath}/boundingbox.png`);
     this.load.image("base", `${staticPath}/base.png`);
     this.load.image("platform", `${staticPath}/largePlatform.png`);
     this.load.image("side-platform", `${staticPath}/sidePlatform.png`);
+    this.load.image("medium-platform", `${staticPath}/mediumPlatform.png`);
+    this.load.image("tiny-platform", `${staticPath}/tinyPlatform.png`);
+    this.load.image("base-left", `${staticPath}/baseLeft.png`);
+    this.load.image("base-middle", `${staticPath}/baseMiddle.png`);
+    this.load.image("base-right", `${staticPath}/baseRight.png`);
+    this.load.image("base-top", `${staticPath}/baseTop.png`);
+
+
 
     this.load.image("shuriken", `${staticPath}/shuriken.png`);
     this.load.audio("shurikenThrow", `${staticPath}/shurikenThrow.mp3`);
@@ -72,15 +86,23 @@ class GameScene extends Phaser.Scene {
 
   create() {
     // Creates the map objects
-    createMap(this);
-    // Creates player object
-    createPlayer(this, username, character, spawnPlatform, spawn, partyMembers);
-    // Adds collision between map and player
-    this.physics.add.collider(player, base);
-    this.physics.add.collider(player, platform);
-    this.physics.add.collider(player, leftPlatform);
-    this.physics.add.collider(player, rightPlatform);
+    if (map === '1') {
+      mapObjects = lushyPeaksObjects
+      lushyPeaks(this)
+    } else if(map === '2') {
+      mapObjects = mangroveMeadowObjects
+      mangroveMeadow(this)
+    }
 
+    // Creates player object
+    createPlayer(this, username, character, spawnPlatform, spawn, partyMembers, map);
+    // Adds collision between map and player
+
+    mapObjects.forEach(mapObject => {
+      // Add collider between the object and each map object
+      this.physics.add.collider(player, mapObject);
+    });
+    
     // Makes the fight element zoom in at the start of the game
     document.getElementById("fight").style.width = "60%";
 
@@ -114,7 +136,8 @@ class GameScene extends Phaser.Scene {
               "user",
               data.userTeam[key]["spawnPlatform"],
               data.userTeam[key]["spawn"],
-              partyMembers
+              partyMembers,
+              map
             );
             teamPlayers[key] = userPlayer; // Adds player object to the list
           }
@@ -128,7 +151,8 @@ class GameScene extends Phaser.Scene {
               "op",
               data.opTeam[key]["spawnPlatform"],
               data.opTeam[key]["spawn"],
-              partyMembers
+              partyMembers,
+              map
             );
             opponentPlayers[key] = opponentPlayer;
           }
@@ -191,10 +215,10 @@ class GameScene extends Phaser.Scene {
         addOverlap(projectile, player, true);
       }
       // Overlap with map
-      addOverlap(projectile, base);
-      addOverlap(projectile, leftPlatform);
-      addOverlap(projectile, rightPlatform);
-      addOverlap(projectile, platform);
+      mapObjects.forEach(mapObject => {
+        // Add collider between the object and each map object
+        addOverlap(projectile, mapObject);
+      });
 
       // Add overlap funciton
       function addOverlap(projectile, object, player = false) {
@@ -262,32 +286,32 @@ class GameScene extends Phaser.Scene {
     });
 
     // When everyone is dead
-    socket.on("game-over", (data) => {
-      if (gameId === data.gameId) {
-        const gameOver = document.getElementById("game-over");
-        if (data.losers.includes(username)) {
-          gameOver.textContent = "You Lose";
-          gameOver.style.color = "#c81212";
-        } else {
-          gameOver.textContent = "You Win";
-          gameOver.style.color = "#18c321";
-        }
+    // socket.on("game-over", (data) => {
+    //   if (gameId === data.gameId) {
+    //     const gameOver = document.getElementById("game-over");
+    //     if (data.losers.includes(username)) {
+    //       gameOver.textContent = "You Lose";
+    //       gameOver.style.color = "#c81212";
+    //     } else {
+    //       gameOver.textContent = "You Win";
+    //       gameOver.style.color = "#18c321";
+    //     }
 
-        // Sets end screen name to player name
-        document.getElementById("username-text").textContent = username;
-        document.getElementById("character-text").textContent = character;
+    //     // Sets end screen name to player name
+    //     document.getElementById("username-text").textContent = username;
+    //     document.getElementById("character-text").textContent = character;
 
-        setTimeout(() => {
-          // Runs after 1 second of death
-          // Disables movement
-          this.input.enabled = false;
-          document.getElementById("container").style.display = "flex";
-          document.getElementById("dark-overlay").style.display = "block";
-          document.getElementById("dark-overlay").style.backgroundColor =
-            "rgba(0, 0, 0, 0.363)";
-        }, 1000);
-      }
-    });
+    //     setTimeout(() => {
+    //       // Runs after 1 second of death
+    //       // Disables movement
+    //       this.input.enabled = false;
+    //       document.getElementById("container").style.display = "flex";
+    //       document.getElementById("dark-overlay").style.display = "block";
+    //       document.getElementById("dark-overlay").style.backgroundColor =
+    //         "rgba(0, 0, 0, 0.363)";
+    //     }, 1000);
+    //   }
+    // });
   }
 
   // Update function is a built in function that runs as much as possible. It is controlled by the phaser scene
@@ -317,6 +341,8 @@ class GameScene extends Phaser.Scene {
 
 const config = {
   type: Phaser.AUTO,
+  antialias: true,
+  resolution: window.devicePixelRatio,
   scale: {
     // Makes sure the game looks good on all screens
     mode: Phaser.Scale.FIT,
@@ -331,9 +357,6 @@ const config = {
       gravity: { y: 750 },
       debug: false,
     },
-  },
-  render: {
-    antialias: true,
   },
 };
 

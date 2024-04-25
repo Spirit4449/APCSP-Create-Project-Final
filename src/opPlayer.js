@@ -1,8 +1,7 @@
 // opplayer.js
 
-import { base, platform } from "./map";
-import { calculateSpawn } from "./player";
-
+import { base, platform } from "./Maps/lushyPeaks";
+import { calculateSpawn, calculateMangroveSpawn } from "./player";
 export default class OpPlayer {
   constructor(
     scene,
@@ -11,7 +10,8 @@ export default class OpPlayer {
     team,
     spawnPlatform,
     spawn,
-    playersInTeam
+    playersInTeam,
+    map,
   ) {
     this.scene = scene;
     this.character = character;
@@ -19,6 +19,8 @@ export default class OpPlayer {
     this.team = team;
     this.spawnPlatform = spawnPlatform;
     this.spawn = spawn;
+    this.map = map;
+    this.mapObjects
     this.playersInTeam = playersInTeam;
     this.opMaxHealth = 8000;
     this.opCurrentHealth = 8000;
@@ -33,10 +35,18 @@ export default class OpPlayer {
     this.opponent.anims.play("idle", true);
 
     // Sets spawns
-    if (this.spawnPlatform === "top") {
-      calculateSpawn(platform, this.spawn, this.opponent);
-    } else if (this.spawnPlatform === "bottom") {
-      calculateSpawn(base, this.spawn, this.opponent);
+    if (this.spawnPlatform === "bottom") {
+      if (this.map === '1') {
+        calculateSpawn(base, this.spawn, this.opponent);
+      } else if (this.map === '2') {
+        calculateMangroveSpawn("bottom", this.spawn, this.opponent);
+      }
+    } else if (this.spawnPlatform === "top") {
+      if (this.map === '1') {
+        calculateSpawn(platform, this.spawn, this.opponent);
+      } else if (this.map === '2') {
+        calculateMangroveSpawn("top", this.spawn, this.opponent);
+      }
     }
 
     // Changes frame size to prevent wall clipping
@@ -98,7 +108,7 @@ export default class OpPlayer {
     this.opHealthBar.fillRect(healthBarX, healthBarY, this.opHealthBarWidth, 9);
 
     // Creates a black border around healthbar
-    this.opHealthBar.lineStyle(2, 0x000000);
+    this.opHealthBar.lineStyle(3, 0x000000);
     this.opHealthBar.strokeRoundedRect(
       healthBarX,
       healthBarY,
@@ -127,3 +137,4 @@ export default class OpPlayer {
     this.opHealthText.setDepth(2);
   }
 }
+

@@ -567,6 +567,7 @@ socket.on("game-started", (data) => {
           sessionStorage.setItem("spawn", player["spawn"]);
           sessionStorage.setItem("party", data.partyId);
           sessionStorage.setItem("partyMembers", data.partyMembers);
+          sessionStorage.setItem("map", data.map);
         }
       }
     }

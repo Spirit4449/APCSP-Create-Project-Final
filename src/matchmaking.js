@@ -20,6 +20,8 @@ socket.on("game-started", (data) => {
           sessionStorage.setItem("spawn", player["spawn"]);
           sessionStorage.setItem("party", data.foundId);
           sessionStorage.setItem("partyMembers", data.partyMembers);
+          sessionStorage.setItem("map", data.map);
+          
         }
       }
     }

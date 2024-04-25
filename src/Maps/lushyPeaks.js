@@ -6,7 +6,9 @@ let platform;
 let leftPlatform;
 let rightPlatform;
 
-export function createMap(scene) {
+const lushyPeaksObjects = []
+
+export function lushyPeaks(scene) {
   // Canvas variables
   const canvasWidth = scene.game.config.width;
   const canvasHeight = scene.game.config.height;
@@ -24,24 +26,29 @@ export function createMap(scene) {
   base.body.allowGravity = false; // Doesn't allow gravity
   base.setImmovable(true); // Makes sure it doesn't move
   base.setScale(0.7); // Makes it smaller
+  lushyPeaksObjects.push(base)
 
   // Platform
   platform = scene.physics.add.sprite(centerX, 250, "platform");
   platform.setScale(0.7);
   platform.body.allowGravity = false;
   platform.setImmovable(true);
+  lushyPeaksObjects.push(platform)
 
   // Left Platform
   leftPlatform = scene.physics.add.sprite(centerX - 500, 260, "side-platform");
   leftPlatform.setScale(0.7);
   leftPlatform.body.allowGravity = false;
   leftPlatform.setImmovable(true);
+  lushyPeaksObjects.push(leftPlatform)
 
   // Right Platform
   rightPlatform = scene.physics.add.sprite(centerX + 500, 260, "side-platform");
   rightPlatform.setScale(0.7);
   rightPlatform.body.allowGravity = false;
   rightPlatform.setImmovable(true);
+  lushyPeaksObjects.push(rightPlatform)
 }
 
-export { base, platform, leftPlatform, rightPlatform };
+
+export { lushyPeaksObjects, base, platform };

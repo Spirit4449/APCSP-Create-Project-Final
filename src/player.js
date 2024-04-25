@@ -1,7 +1,17 @@
 // player.js
 
 import { opponentPlayers, teamPlayers, socket } from "./game";
-import { base, platform, leftPlatform, rightPlatform } from "./map";
+import { lushyPeaksObjects, base, platform } from "./Maps/lushyPeaks";
+import {
+  mangroveMeadowObjects,
+  tinyPlatform1,
+  tinyPlatform2,
+  tinyPlatform3,
+  tinyPlatform4,
+  tinyPlatform5,
+  tinyPlatform6,
+} from "./Maps/mangroveMeadow";
+import { ninjaAnimations } from "./Animations/ninja";
 // Globals
 let player;
 let cursors;
@@ -33,6 +43,8 @@ let scene;
 let spawn;
 let playersInTeam;
 let spawnPlatform;
+let mapObjects;
+let map;
 
 // Create player function
 export function createPlayer(
@@ -41,91 +53,20 @@ export function createPlayer(
   character,
   spawnPlatformParam,
   spawnParam,
-  playersInTeamParam
+  playersInTeamParam,
+  mapParam
 ) {
   username = name;
   scene = sceneParam;
   spawn = spawnParam;
   playersInTeam = playersInTeamParam;
   spawnPlatform = spawnPlatformParam;
-
+  map = mapParam;
   cursors = scene.input.keyboard.createCursorKeys();
 
-  // Animations
-  scene.anims.create({
-    key: "running", // Name of animation
-    frames: scene.anims.generateFrameNames("sprite", {
-      prefix: "running", // Name inside of json file
-      end: 5, // Length of animation in frames (Since the numbers start at 0, the end is always 1 more. So 5 + 1 = 6 frames)
-      zeroPad: 2, // Number of zeros in json file
-    }),
-    frameRate: 20, // Number of frames per second
-    repeat: 0, // Number of times to repeat (0 means none) (-1 means infinite times)
-  });
-  scene.anims.create({
-    key: "idle",
-    frames: scene.anims.generateFrameNames("sprite", {
-      prefix: "idle",
-      end: 4,
-      zeroPad: 2,
-    }),
-    frameRate: 3,
-    repeat: -1,
-  });
-  scene.anims.create({
-    key: "jumping",
-    frames: scene.anims.generateFrameNames("sprite", {
-      prefix: "jumping",
-      end: 7,
-      zeroPad: 2,
-    }),
-    frameRate: 20,
-    repeat: 0,
-  });
-
-  scene.anims.create({
-    key: "sliding",
-    frames: scene.anims.generateFrameNames("sprite", {
-      prefix: "wall",
-      end: 0,
-      zeroPad: 2,
-    }),
-    frameRate: 20,
-    repeat: 2,
-  });
-
-  scene.anims.create({
-    key: "falling",
-    frames: scene.anims.generateFrameNames("sprite", {
-      prefix: "falling",
-      end: 2,
-      zeroPad: 2,
-    }),
-    frameRate: 20,
-    repeat: 0,
-  });
-
-  scene.anims.create({
-    key: "throw",
-    frames: scene.anims.generateFrameNames("sprite", {
-      prefix: "throw",
-      end: 3,
-      zeroPad: 2,
-    }),
-    frameRate: 15,
-    repeat: 0,
-  });
-
-  scene.anims.create({
-    key: "dying",
-    frames: scene.anims.generateFrameNames("sprite", {
-      prefix: "dying",
-      end: 3,
-      zeroPad: 2,
-    }),
-    frameRate: 10,
-    repeat: 0,
-  });
+  if (character === "Ninja") {
+    ninjaAnimations(scene);
+  }
 
   // Create player sprite!!
   player = scene.physics.add.sprite(-100, -100, "sprite");
@@ -133,18 +74,33 @@ export function createPlayer(
 
   // Listener to detect if player leaves the world bounds
   scene.events.on("update", () => {
-    if (player.y > scene.physics.world.bounds.bottom) {
+    if (player.y > scene.physics.world.bounds.bottom + 50) {
       setTimeout(() => {
         currentHealth = 0; // sets health to 0 if the player leaves the world bounds
       }, 500);
     }
   });
 
+  // Map
+  if (map === "1") {
+    mapObjects = lushyPeaksObjects;
+  } else if (map === "2") {
+    mapObjects = mangroveMeadowObjects;
+  }
+
   // Sets spawn based on session storage data
-  if (spawnPlatform === "top") {
-    calculateSpawn(platform, spawn, player);
-  } else if (spawnPlatform === "bottom") {
-    calculateSpawn(base, spawn, player);
+  if (spawnPlatform === "bottom") {
+    if (map === "1") {
+      calculateSpawn(base, spawn, player);
+    } else if (map === "2") {
+      calculateMangroveSpawn("bottom", spawn, player)
+    }
+  } else if (spawnPlatform === "top") {
+    if (map === "1") {
+      calculateSpawn(platform, spawn, player);
+    } else if (map === "2") {
+      calculateMangroveSpawn("top", spawn, player)
+    }
   }
 
   // Changes size of player frame so it can't clip. There are some issues where the frame changes to fit the animation size so this must be done to prevent that.
@@ -237,10 +193,11 @@ export function createPlayer(
         }
 
         // Adds overlap with the map
-        addOverlap(projectile, base);
-        addOverlap(projectile, leftPlatform);
-        addOverlap(projectile, rightPlatform);
-        addOverlap(projectile, platform);
+        mapObjects.forEach((mapObject) => {
+          // Add collider between the object and each map object
+          addOverlap(projectile, mapObject);
+        });
+
         // Add overlap function
         function addOverlap(projectile, object) {
           // If the overlap has an opponent variable (if the object is a person)
@@ -260,7 +217,7 @@ export function createPlayer(
               }
             );
           } else {
-            // If the object is a map
+            // If the object is a
             scene.physics.add.overlap(
               projectile,
               object,
@@ -304,13 +261,13 @@ function updateHealthBar() {
       scene.input.enabled = false;
       player.alpha = 0.5;
 
-      document.getElementById("dark-overlay").style.display = "block";
-      document.getElementById("dark-overlay").style.backgroundColor =
-        "rgba(0, 0, 0, 0.1)";
-      document.getElementById("dead").style.display = "block";
-      document.getElementById("your-team").textContent = `Your Team: ${
-        playersInTeam - 1
-      }/${playersInTeam} Players`;
+      // document.getElementById("dark-overlay").style.display = "block";
+      // document.getElementById("dark-overlay").style.backgroundColor =
+      //   "rgba(0, 0, 0, 0.1)";
+      // document.getElementById("dead").style.display = "block";
+      // document.getElementById("your-team").textContent = `Your Team: ${
+      //   playersInTeam - 1
+      // }/${playersInTeam} Players`;
       socket.emit("death", { username, gameId, x: player.x, y: player.y });
     }
   }
@@ -335,7 +292,7 @@ function updateHealthBar() {
   healthBar.fillRect(healthBarX, healthBarY, healthBarWidth, 9);
 
   // Draw the health bar background (stroke)
-  healthBar.lineStyle(2, 0x000000);
+  healthBar.lineStyle(3, 0x000000);
   healthBar.strokeRoundedRect(healthBarX, healthBarY, healthBarWidth, 9, 3);
 
   // Draw the filled part of the health bar (green)
@@ -352,6 +309,36 @@ function calculateSpawn(platform, spawn, player) {
   const spawnY = platform.getTopCenter().y - player.height / 2; // Gets y cordinate for the player by calculating the center and subtracting half the player height. Since the player y is at the center.
 
   const spawnX = leftMost + (spawn * availableSpace) / 2 - player.width * 1.333; // Calculates spawnx by combining all the previous variables. 1.333 is multiplied to perfect the position of the spawn otherwise it is offset to the right.
+  player.x = spawnX;
+  player.y = spawnY;
+}
+function calculateMangroveSpawn(position, spawnParam, player) {
+  let platform
+  let spawn = String(spawnParam)
+  if (position === 'top') {
+    if (spawn === '1') {
+      platform = tinyPlatform1
+    } else if (spawn === '2') {
+      platform = tinyPlatform2
+    } else if (spawn === '3') {
+      platform = tinyPlatform3
+    }
+  } else if (position === 'bottom') {
+    if (spawn === '1') {
+      platform = tinyPlatform4
+    } else if (spawn === '2') {
+      platform = tinyPlatform5
+    } else if (spawn === '3') {
+      platform = tinyPlatform6
+    }
+  }
+ 
+  const availableSpace = platform.width
+  const leftMost = platform.getBounds().left; // Leftmost x cord of the platform
+  const spawnY = platform.getTopCenter().y - player.height / 2// Gets y cordinate for the player by calculating the center and subtracting half the player height. Since the player y is at the center.
+
+  const spawnX =
+    leftMost + (availableSpace / 2) - player.width
   player.x = spawnX;
   player.y = spawnY;
 }
@@ -481,4 +468,4 @@ export function handlePlayerMovement(scene) {
   }
 }
 
-export { player, frame, currentHealth, setCurrentHealth, dead, calculateSpawn };
+export { player, frame, currentHealth, setCurrentHealth, dead, calculateSpawn, calculateMangroveSpawn };
