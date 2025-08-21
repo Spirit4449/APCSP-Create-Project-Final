@@ -186,51 +186,6 @@ export function createPlayer(
         projectile.body.allowGravity = false; // Disables gravity
         projectile.setAngularVelocity(angularVelocity); // Sets rotation speed
 
-        // Adds overlap with every player in the opponent side
-        for (const playerId in opponentPlayers) {
-          const opponentPlayer = opponentPlayers[playerId];
-          addOverlap(projectile, opponentPlayer);
-        }
-
-        // Adds overlap with the map
-        mapObjects.forEach((mapObject) => {
-          // Add collider between the object and each map object
-          addOverlap(projectile, mapObject);
-        });
-
-        // Add overlap function
-        function addOverlap(projectile, object) {
-          // If the overlap has an opponent variable (if the object is a person)
-          if (object.opponent) {
-            scene.physics.add.overlap(
-              projectile,
-              object.opponent,
-              function (projectile) {
-                object.opCurrentHealth -= damage; // Damages the player for 1000 health
-                object.updateHealthBar(); // Updates their health bar
-                projectile.destroy(); // Destroy projectile on collision
-
-                // Plays hit sound for a player
-                let hitSound = scene.sound.add("shurikenHit");
-                hitSound.setVolume(0.008); // Turns volume down
-                hitSound.play();
-              }
-            );
-          } else {
-            // If the object is a
-            scene.physics.add.overlap(
-              projectile,
-              object,
-              function (projectile) {
-                projectile.destroy(); // Destroy projectile on collision
-                // Plays sound for hitting map
-                let hitSound = scene.sound.add("shurikenHitWood");
-                hitSound.setVolume(0.01); // Turns down volume
-                hitSound.play();
-              }
-            );
-          }
-        }
         // Emits attack to other players with all the information
         socket.emit("attack", {
           x: player.x,
@@ -248,8 +203,8 @@ export function createPlayer(
 }
 
 // Function to set health of player from another file
-function setCurrentHealth(damage) {
-  currentHealth -= damage;
+function setCurrentHealth(newHealth) {
+  currentHealth = newHealth;
   updateHealthBar();
 }
 function updateHealthBar() {
@@ -261,13 +216,13 @@ function updateHealthBar() {
       scene.input.enabled = false;
       player.alpha = 0.5;
 
-      // document.getElementById("dark-overlay").style.display = "block";
-      // document.getElementById("dark-overlay").style.backgroundColor =
-      //   "rgba(0, 0, 0, 0.1)";
-      // document.getElementById("dead").style.display = "block";
-      // document.getElementById("your-team").textContent = `Your Team: ${
-      //   playersInTeam - 1
-      // }/${playersInTeam} Players`;
+      document.getElementById("dark-overlay").style.display = "block";
+      document.getElementById("dark-overlay").style.backgroundColor =
+        "rgba(0, 0, 0, 0.1)";
+      document.getElementById("dead").style.display = "block";
+      document.getElementById("your-team").textContent = `Your Team: ${
+        playersInTeam - 1
+      }/${playersInTeam} Players`;
       socket.emit("death", { username, gameId, x: player.x, y: player.y });
     }
   }
@@ -344,9 +299,6 @@ function calculateMangroveSpawn(position, spawnParam, player) {
 }
 
 export function handlePlayerMovement(scene) {
-  const speed = 250;
-  const jumpSpeed = 400;
-
   // Keys. Player can use either arrow keys or WASD
   const leftKey =
     cursors.left.isDown || scene.input.keyboard.addKey("A").isDown;
@@ -354,48 +306,24 @@ export function handlePlayerMovement(scene) {
     cursors.right.isDown || scene.input.keyboard.addKey("D").isDown;
   const upKey = cursors.up.isDown || scene.input.keyboard.addKey("W").isDown;
 
-  // Left movement
-  if (leftKey) {
-    if (indicatorTriangle) {
-      indicatorTriangle.clear(); // Removes indicator triangle if the player has moved
-    }
-    player.setVelocityX(-speed); // Sets velocity to negative so that it moves left
-    player.flipX = true; // Mirrors the body of the player
-    isMoving = true; // Sets the isMoving to true
-    if (player.body.touching.down && !isAttacking && !dead) {
-      // If the player is not in the air or attacking or dead, it plays the running animation
-      player.anims.play("running", true);
-    }
-    // Right movement
-  } else if (rightKey) {
-    if (indicatorTriangle) {
-      indicatorTriangle.clear(); // Removes indicator triangle if the player has moved
-    }
-    player.flipX = false; // Undos the mirror of the player
-    player.setVelocityX(speed); // Sets velocity torwards right
-    isMoving = true; // Sets moving variable
-    if (player.body.touching.down && !isAttacking && !dead) {
-      // If the player is not in the air or attacking or dead, it plays the running animation
-      player.anims.play("running", true);
-    }
-  } else {
-    stopMoving(); // If no key is being pressed, it calls the stop moving function
-  }
+  const input = {
+    left: leftKey,
+    right: rightKey,
+    up: upKey,
+  };
 
-  // Jumping
+  //Jumping
   if (upKey && player.body.touching.down && !dead) {
     // If player is touching ground and jumping
     if (indicatorTriangle) {
       indicatorTriangle.clear(); // Removes indicator triangle if the player has jumped
     }
-    jump(); // Calls jump
   } else if (
     // If player is touching a wall while jumping
     (player.body.touching.left || (player.body.touching.right && !dead)) &&
     canWallJump &&
     upKey
   ) {
-    wallJump(); // Calls walljump
   }
   if (
     (player.body.touching.left || (player.body.touching.right && !dead)) &&
@@ -411,7 +339,6 @@ export function handlePlayerMovement(scene) {
     !player.body.touching.left &&
     !player.body.touching.right
   ) {
-    fall(); // Plays falling animation if the player is not touching a wall or if any other animation is playing
   }
 
   // If no movement animations are playing, play the 'idle' animation
@@ -422,50 +349,11 @@ export function handlePlayerMovement(scene) {
     !isAttacking &&
     !dead
   ) {
-    idle();
   }
 
   updateHealthBar(); // Updates the health bar after the new player position
   playerName.setPosition(player.x, player.y - player.height + 10); // Updates the player nametag with the new position
-
-  function stopMoving() {
-    player.setVelocityX(0); // Sets the player to not moving
-    isMoving = false;
-  }
-
-  function jump() {
-    player.anims.play("jumping", true);
-    player.setVelocityY(-jumpSpeed);
-    isMoving = true;
-    isJumping = true;
-  }
-
-  function wallJump() {
-    canWallJump = false;
-    player.anims.play("sliding", true);
-    player.setVelocityY(-jumpSpeed);
-
-    const wallJumpTween = scene.tweens.add({
-      // This tween smooths the kickback from the walljump
-      targets: player,
-      x: player.x + (player.body.touching.left ? 50 : -50), // Moves the player -50 or 50 cords away depending on position
-      duration: 200,
-      ease: "Linear",
-      onComplete: function () {
-        canWallJump = true;
-      },
-    });
-    wallJumpTween.play(); // Plays the tween
-  }
-
-  function fall() {
-    player.anims.play("falling", true);
-    isJumping = false;
-  }
-
-  function idle() {
-    player.anims.play("idle", true);
-  }
+  return input;
 }
 
 export { player, frame, currentHealth, setCurrentHealth, dead, calculateSpawn, calculateMangroveSpawn };

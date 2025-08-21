@@ -171,21 +171,46 @@ class GameScene extends Phaser.Scene {
       });
     }, 1000);
 
-    // Code that runs when another player moves
-    socket.on("move", (data) => {
-      const opponentPlayer =
-        opponentPlayers[data.username] || teamPlayers[data.username];
-      // Finds player from the list
-      if (opponentPlayer) {
-        // Sets the x and y of the opponent as well as the animaiton
-        opponentPlayer.opponent.x = data.x;
-        opponentPlayer.opponent.y = data.y;
-        opponentPlayer.opponent.flipX = data.flip;
-        opponentPlayer.opPlayerName.setPosition(
-          opponentPlayer.opponent.x,
-          opponentPlayer.opponent.y - opponentPlayer.opponent.height + 10
-        );
-        opponentPlayer.opponent.anims.play(data.animation, true);
+    socket.on("game-state", (data) => {
+      if (data[gameId]) {
+        const gameState = data[gameId];
+        for (const teamKey in gameState) {
+          const team = gameState[teamKey];
+          for (const playerKey in team) {
+            const playerData = team[playerKey];
+            if (playerKey === username) {
+              // Update local player
+              player.x = playerData.x;
+              player.y = playerData.y;
+              if (playerData.vx > 0) {
+                player.flipX = false;
+                player.anims.play("running", true);
+              } else if (playerData.vx < 0) {
+                player.flipX = true;
+                player.anims.play("running", true);
+              } else {
+                player.anims.play("idle", true);
+              }
+            } else {
+              // Update opponent players
+              const opponentPlayer =
+                opponentPlayers[playerKey] || teamPlayers[playerKey];
+              if (opponentPlayer) {
+                opponentPlayer.opponent.x = playerData.x;
+                opponentPlayer.opponent.y = playerData.y;
+                if (playerData.vx > 0) {
+                  opponentPlayer.opponent.flipX = false;
+                  opponentPlayer.opponent.anims.play("running", true);
+                } else if (playerData.vx < 0) {
+                  opponentPlayer.opponent.flipX = true;
+                  opponentPlayer.opponent.anims.play("running", true);
+                } else {
+                  opponentPlayer.opponent.anims.play("idle", true);
+                }
+              }
+            }
+          }
+        }
       }
     });
 
@@ -199,51 +224,6 @@ class GameScene extends Phaser.Scene {
       // Makes projectile rotate
       projectile.setAngularVelocity(data.angularVelocity);
       projectile.body.allowGravity = false;
-
-      if (data.name in teamPlayers) {
-        for (const player in opponentPlayers) {
-          const opponentPlayer = opponentPlayers[player];
-          addOverlap(projectile, opponentPlayer);
-        }
-      } else if (data.name in opponentPlayers) {
-        for (const player in teamPlayers) {
-          const teamPlayer = teamPlayers[player];
-          // Adds overlap between team players if someone in your team throws is
-          addOverlap(projectile, teamPlayer);
-        }
-        // Adds overlap with player
-        addOverlap(projectile, player, true);
-      }
-      // Overlap with map
-      mapObjects.forEach(mapObject => {
-        // Add collider between the object and each map object
-        addOverlap(projectile, mapObject);
-      });
-
-      // Add overlap funciton
-      function addOverlap(projectile, object, player = false) {
-        if (object.opponent) {
-          scene.physics.add.overlap(
-            projectile,
-            object.opponent,
-            function (projectile) {
-              object.opCurrentHealth -= data.damage;
-              object.updateHealthBar();
-              projectile.destroy();
-            }
-          );
-        } else if (player === true) {
-          scene.physics.add.overlap(projectile, object, function (projectile) {
-            // Subtracts 1000 health from player
-            setCurrentHealth(1000);
-            projectile.destroy();
-          });
-        } else {
-          scene.physics.add.overlap(projectile, object, function (projectile) {
-            projectile.destroy(); // Destroy projectile on collision
-          });
-        }
-      }
     });
 
     // When another player dies
@@ -285,47 +265,51 @@ class GameScene extends Phaser.Scene {
       }
     });
 
+    socket.on("health-update", (data) => {
+      const opponentPlayer =
+        opponentPlayers[data.username] || teamPlayers[data.username];
+      if (opponentPlayer) {
+        opponentPlayer.opCurrentHealth = data.health;
+        opponentPlayer.updateHealthBar();
+      } else if (data.username === username) {
+        setCurrentHealth(data.health);
+      }
+    });
+
     // When everyone is dead
-    // socket.on("game-over", (data) => {
-    //   if (gameId === data.gameId) {
-    //     const gameOver = document.getElementById("game-over");
-    //     if (data.losers.includes(username)) {
-    //       gameOver.textContent = "You Lose";
-    //       gameOver.style.color = "#c81212";
-    //     } else {
-    //       gameOver.textContent = "You Win";
-    //       gameOver.style.color = "#18c321";
-    //     }
+    socket.on("game-over", (data) => {
+      if (gameId === data.gameId) {
+        const gameOver = document.getElementById("game-over");
+        if (data.losers.includes(username)) {
+          gameOver.textContent = "You Lose";
+          gameOver.style.color = "#c81212";
+        } else {
+          gameOver.textContent = "You Win";
+          gameOver.style.color = "#18c321";
+        }
 
-    //     // Sets end screen name to player name
-    //     document.getElementById("username-text").textContent = username;
-    //     document.getElementById("character-text").textContent = character;
+        // Sets end screen name to player name
+        document.getElementById("username-text").textContent = username;
+        document.getElementById("character-text").textContent = character;
 
-    //     setTimeout(() => {
-    //       // Runs after 1 second of death
-    //       // Disables movement
-    //       this.input.enabled = false;
-    //       document.getElementById("container").style.display = "flex";
-    //       document.getElementById("dark-overlay").style.display = "block";
-    //       document.getElementById("dark-overlay").style.backgroundColor =
-    //         "rgba(0, 0, 0, 0.363)";
-    //     }, 1000);
-    //   }
-    // });
+        setTimeout(() => {
+          // Runs after 1 second of death
+          // Disables movement
+          this.input.enabled = false;
+          document.getElementById("container").style.display = "flex";
+          document.getElementById("dark-overlay").style.display = "block";
+          document.getElementById("dark-overlay").style.backgroundColor =
+            "rgba(0, 0, 0, 0.363)";
+        }, 1000);
+      }
+    });
   }
 
   // Update function is a built in function that runs as much as possible. It is controlled by the phaser scene
   update() {
     if (!dead) {
-      handlePlayerMovement(this); // Handles movement
-      socket.emit("move", {
-        // Emits x and y every update
-        x: player.x,
-        y: player.y,
-        flip: player.flipX,
-        animation: player.anims.currentAnim,
-        username,
-      });
+      const input = handlePlayerMovement(this); // Handles movement
+      socket.emit("player-input", { input, username });
     }
     // Updates health bars
     for (const player in opponentPlayers) {

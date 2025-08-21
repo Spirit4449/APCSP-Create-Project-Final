@@ -241,16 +241,16 @@ app.get("/matchmaking/:partyid", (req, res) => {
           const party1Players = games[gameId][party1];
           const party2Players = games[gameId][party2];
 
+          const map = parties[partyId][0]["map"]
           // Assign spawn properties based on party affiliation
           if (randomParty === party1) {
-            setSpawnProperties(party1Players, "top");
-            setSpawnProperties(party2Players, "bottom");
+            setSpawnProperties(party1Players, "top", map);
+            setSpawnProperties(party2Players, "bottom", map);
           } else {
-            setSpawnProperties(party1Players, "bottom");
-            setSpawnProperties(party2Players, "top");
+            setSpawnProperties(party1Players, "bottom", map);
+            setSpawnProperties(party2Players, "top", map);
           }
 
-          const map = parties[partyId][0]["map"]
           // After 1 second, game-started will be emit. This is to give time for the players, to enter the matchmaking screen.
           setTimeout(() => {
             io.emit("game-started", {
@@ -320,8 +320,21 @@ app.use((req, res, next) => {
   return res.sendFile(path.join(__dirname, "dist", "/Errors/404.html"));
 });
 
+const playerInputs = {};
+const projectiles = {};
+
 // Whenever a user joins, all of this will occur. This is the socket configuration for multi-player setup
 io.on("connection", (socket) => {
+  playerInputs[socket.id] = {
+    left: false,
+    right: false,
+    up: false,
+  };
+
+  socket.on("player-input", (data) => {
+    playerInputs[socket.id] = data.input;
+  });
+
   socket.on("user-joined", (data) => {
     if (parties[data.partyId]) {
       for (const person in parties[data.partyId]) {
@@ -355,6 +368,11 @@ io.on("connection", (socket) => {
         ready: false,
         dead: false,
         team: "",
+        health: 8000,
+        x: 0,
+        y: 0,
+        vx: 0,
+        vy: 0,
       });
       // Emits connection just for that user
       socket.emit("connection", { partyMembers: parties[data.partyId] });
@@ -375,51 +393,27 @@ io.on("connection", (socket) => {
   socket.on("move", (data) => {
     socket.broadcast.emit("move", data);
   });
-  // When a player attacks, a message is sent to everyone else
   socket.on("attack", (data) => {
+    const projectileId = `${socket.id}-${Date.now()}`;
+    projectiles[projectileId] = {
+      id: projectileId,
+      attacker: data.name,
+      x: data.x,
+      y: data.y,
+      vx: data.velocity,
+      vy: 0,
+      damage: data.damage,
+      team: null, // will be set when we find the player
+    };
+    // Also broadcast the attack to clients for rendering
     socket.broadcast.emit("attack", data);
   });
-  // When a player dies
-  socket.on("death", (data) => {
-    let playerTeam;
-    for (const teamKey in games[data.gameId]) {
-      const team = games[data.gameId][teamKey];
-      for (const playerKey in team) {
-        if (team[playerKey]["name"] === data.username) {
-          team[playerKey]["dead"] = true; // Sets the dead variable for that user to true
-          playerTeam = team; // Sets the team of that player
-        }
-      }
-    }
-    let allPlayersDead = true;
-    let losers = [];
-    for (const playerKey in playerTeam) {
-      losers.push(playerTeam[playerKey]["name"]); // If everyone was dead, the player is added to the list of losers
-      if (playerTeam[playerKey]["dead"] === false) {
-        // If someone is not dead, then allPlayersDead is false
-        allPlayersDead = false;
-      }
-    }
-    // Emits death message to all users
-    socket.broadcast.emit("death", data);
-    // If everyone is dead
-    if (allPlayersDead && games[data.gameId]) {
-      const gameParties = Object.keys(games[data.gameId]);
-      for (const party of gameParties) {
-        if (parties[party]) {
-          // Checks if the game was an internal game (no matchmaking occured since the party was already full)
-          parties[party][0]["gameStarted"] = false; // Set game to end
-        }
-      }
-      // Emits game over message
-      io.emit("game-over", {
-        username: data.username,
-        gameId: data.gameId,
-        losers, // If the player is not found in the losers dictionary, it will say they won
-      });
-      // Deletes the game from the games dicitonary
-      //delete games[data.gameId];
-    }
+
+  // When a player attacks, a message is sent to everyone else
+  socket.on("attack", (data) => {
+    // In the future, the server will calculate the attack and emit the result
+    // For now, it just broadcasts the attack to other clients
+    socket.broadcast.emit("attack", data);
   });
 
   // When a player changes character, a message is sent to everyone else
@@ -538,17 +532,18 @@ io.on("connection", (socket) => {
           const array = [party1, party2];
           const randomParty = array[Math.floor(Math.random() * array.length)]; // Picks a random party
 
+          const map = parties[data.partyId][0]["map"]
           // Sets the spawns if the party that was picked is party1
           if (randomParty === party1) {
-            setSpawnProperties(party1, "top");
-            setSpawnProperties(party2, "bottom");
+            setSpawnProperties(party1, "top", map);
+            setSpawnProperties(party2, "bottom", map);
           } else {
             // Sets the spawns if the party that was picked is party2
-            setSpawnProperties(party1, "bottom");
-            setSpawnProperties(party2, "top");
+            setSpawnProperties(party1, "bottom", map);
+            setSpawnProperties(party2, "top", map);
           }
 
-          const map = parties[data.partyId][0]["map"]
+          games[gameId].map = map;
           // Emits game started
           io.emit("game-started", {
             partyId: data.partyId,
@@ -612,6 +607,158 @@ io.on("connection", (socket) => {
   });
 });
 
+const { maps } = require("./src/server/maps.js");
+
+// Game loop
+const gravity = 750;
+const speed = 250;
+const jumpSpeed = 400;
+const frameRate = 60;
+const frameTime = 1000 / frameRate;
+const playerWidth = 50;
+const playerHeight = 100;
+
+setInterval(() => {
+  for (const gameId in games) {
+    const game = games[gameId];
+    const mapData = maps[game.map];
+    if (!mapData) continue;
+
+    const newGameState = {};
+    for (const teamKey in game) {
+      if (teamKey === "map") continue;
+      const team = game[teamKey];
+      for (const playerKey in team) {
+        const player = team[playerKey];
+        const input = playerInputs[player.socketId] || {
+          left: false,
+          right: false,
+          up: false,
+        };
+
+        // Horizontal movement
+        if (input.left) {
+          player.vx = -speed;
+        } else if (input.right) {
+          player.vx = speed;
+        } else {
+          player.vx = 0;
+        }
+
+        // Vertical movement (gravity)
+        player.vy += gravity / frameRate;
+
+        // Update position
+        let nextY = player.y + player.vy / frameRate;
+        let onGround = false;
+
+        // Collision detection
+        for (const platform of mapData.platforms) {
+          if (
+            player.x < platform.x + platform.width &&
+            player.x + playerWidth > platform.x &&
+            player.y + playerHeight <= platform.y &&
+            nextY + playerHeight >= platform.y
+          ) {
+            nextY = platform.y - playerHeight;
+            player.vy = 0;
+            onGround = true;
+          }
+        }
+
+        player.y = nextY;
+        player.x += player.vx / frameRate;
+
+        // Jumping
+        if (input.up && onGround) {
+          player.vy = -jumpSpeed;
+        }
+
+        // Health and death
+        if (player.health <= 0 && !player.dead) {
+          player.dead = true;
+          io.emit("death", {
+            username: player.name,
+            gameId,
+            x: player.x,
+            y: player.y,
+          });
+
+          // Check for game over
+          const teamDead = Object.values(team).every((p) => p.dead);
+          if (teamDead) {
+            const losers = Object.values(team).map((p) => p.name);
+            io.emit("game-over", { gameId, losers });
+            delete games[gameId];
+            continue;
+          }
+        }
+
+        if (!newGameState[gameId]) {
+          newGameState[gameId] = {};
+        }
+        if (!newGameState[gameId][teamKey]) {
+          newGameState[gameId][teamKey] = {};
+        }
+        newGameState[gameId][teamKey][playerKey] = {
+          x: player.x,
+          y: player.y,
+          vx: player.vx,
+          vy: player.vy,
+          health: player.health,
+          dead: player.dead,
+        };
+      }
+    }
+    // Update and check projectiles
+    for (const projectileId in projectiles) {
+      const projectile = projectiles[projectileId];
+      projectile.x += projectile.vx / frameRate;
+      projectile.y += projectile.vy / frameRate;
+
+      // Check for collision with players
+      for (const teamKey in game) {
+        if (teamKey === "map") continue;
+        const team = game[teamKey];
+        for (const playerKey in team) {
+          const player = team[playerKey];
+          if (player.name !== projectile.attacker) {
+            if (
+              projectile.x < player.x + playerWidth &&
+              projectile.x > player.x &&
+              projectile.y < player.y + playerHeight &&
+              projectile.y > player.y
+            ) {
+              player.health -= projectile.damage;
+              io.emit("health-update", {
+                username: player.name,
+                health: player.health,
+              });
+              delete projectiles[projectileId];
+              break;
+            }
+          }
+        }
+      }
+      if (!projectiles[projectileId]) continue;
+
+      // Check for collision with map
+      for (const platform of mapData.platforms) {
+        if (
+          projectile.x < platform.x + platform.width &&
+          projectile.x > platform.x &&
+          projectile.y < platform.y + platform.height &&
+          projectile.y > platform.y
+        ) {
+          delete projectiles[projectileId];
+          break;
+        }
+      }
+    }
+    io.emit("game-state", newGameState);
+  }
+}, frameTime);
+
 // Start the server
 server.listen(port, () => {
   console.log(`Server is listening at http://localhost:${port}`); // Sets up the server to listen on port 3000
@@ -646,10 +793,24 @@ function clonePlayers(partyId) {
 }
 
 // Sets spawn points for each player
-function setSpawnProperties(players, spawnPlatform) {
+function setSpawnProperties(players, spawnPlatform, mapId) {
   let spawnCounter = 1;
   for (const player of players) {
     player["spawnPlatform"] = spawnPlatform;
-    player["spawn"] = spawnCounter++; // Spawn counter is used to figure out where to place the user in game.js
+    player["spawn"] = spawnCounter;
+
+    const mapData = maps[mapId];
+    if (mapData) {
+      const platform =
+        spawnPlatform === "top"
+          ? mapData.platforms[1]
+          : mapData.platforms[0];
+      const availableSpace = platform.width / players.length;
+      const leftMost = platform.x;
+      player.y = platform.y - 100; // 100 is player height
+      player.x = leftMost + spawnCounter * availableSpace - availableSpace / 2;
+    }
+
+    spawnCounter++;
   }
 }
