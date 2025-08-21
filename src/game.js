@@ -286,32 +286,32 @@ class GameScene extends Phaser.Scene {
     });
 
     // When everyone is dead
-    // socket.on("game-over", (data) => {
-    //   if (gameId === data.gameId) {
-    //     const gameOver = document.getElementById("game-over");
-    //     if (data.losers.includes(username)) {
-    //       gameOver.textContent = "You Lose";
-    //       gameOver.style.color = "#c81212";
-    //     } else {
-    //       gameOver.textContent = "You Win";
-    //       gameOver.style.color = "#18c321";
-    //     }
+    socket.on("game-over", (data) => {
+      if (gameId === data.gameId) {
+        const gameOver = document.getElementById("game-over");
+        if (data.losers.includes(username)) {
+          gameOver.textContent = "You Lose";
+          gameOver.style.color = "#c81212";
+        } else {
+          gameOver.textContent = "You Win";
+          gameOver.style.color = "#18c321";
+        }
 
-    //     // Sets end screen name to player name
-    //     document.getElementById("username-text").textContent = username;
-    //     document.getElementById("character-text").textContent = character;
+        // Sets end screen name to player name
+        document.getElementById("username-text").textContent = username;
+        document.getElementById("character-text").textContent = character;
 
-    //     setTimeout(() => {
-    //       // Runs after 1 second of death
-    //       // Disables movement
-    //       this.input.enabled = false;
-    //       document.getElementById("container").style.display = "flex";
-    //       document.getElementById("dark-overlay").style.display = "block";
-    //       document.getElementById("dark-overlay").style.backgroundColor =
-    //         "rgba(0, 0, 0, 0.363)";
-    //     }, 1000);
-    //   }
-    // });
+        setTimeout(() => {
+          // Runs after 1 second of death
+          // Disables movement
+          this.input.enabled = false;
+          document.getElementById("container").style.display = "flex";
+          document.getElementById("dark-overlay").style.display = "block";
+          document.getElementById("dark-overlay").style.backgroundColor =
+            "rgba(0, 0, 0, 0.363)";
+        }, 1000);
+      }
+    });
   }
 
   // Update function is a built in function that runs as much as possible. It is controlled by the phaser scene

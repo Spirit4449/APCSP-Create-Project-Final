@@ -418,7 +418,7 @@ io.on("connection", (socket) => {
         losers, // If the player is not found in the losers dictionary, it will say they won
       });
       // Deletes the game from the games dicitonary
-      //delete games[data.gameId];
+      delete games[data.gameId];
     }
   });
 
