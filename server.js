@@ -94,7 +94,7 @@ app.get("/game/:gameid", (req, res) => {
   let personFound = false;
 
   if (games[gameId]) {
-    // Checks to see if the person is in the game to allow them in
+    // Checks to see if the person is in the game to allow them to enter
     for (const teamKey in games[gameId]) {
       let team = games[gameId][teamKey]; // For each team in the game
       for (const personKey in team) {
@@ -445,6 +445,7 @@ io.on("connection", (socket) => {
     });
     socket.broadcast.emit("attack", data);
   });
+  // Removed projectile-update/destroy (deterministic client simulation now)
 
   // Server-authoritative health: client reports a successful hit it originated; server updates health & broadcasts
   socket.on("hit", (data) => {

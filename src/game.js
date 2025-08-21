@@ -14,18 +14,15 @@
 import { lushyPeaks, lushyPeaksObjects } from "./Maps/lushyPeaks";
 import { mangroveMeadow, mangroveMeadowObjects } from "./Maps/mangroveMeadow";
 import { createPlayer, player, handlePlayerMovement, dead } from "./player";
+import ReturningShuriken from "./ReturningShuriken";
 import socket from "./socket";
 import OpPlayer from "./opPlayer";
 
 // Socket now imported from standalone module to prevent circular deps
-function cdbg(label, data = {}) {
-  try {
-    console.log(`[CLIENT][${new Date().toISOString()}] ${label}`, data);
-  } catch (e) {
-    console.log(`[CLIENT] ${label}`);
-  }
+function cdbg() {
+  /* logging disabled for production */
 }
-cdbg("init", { gameId: window.location.pathname });
+cdbg();
 
 // Path to get assets
 const staticPath = "/assets";
@@ -49,11 +46,13 @@ const opponentPlayers = [];
 const teamPlayers = [];
 let gameEnded = false; // stops update loop network emissions after game over
 
+// No remote projectile registry (deterministic simulation on each client)
+
 // Phaser class to setup the game
 class GameScene extends Phaser.Scene {
   // Preloads assets
   preload() {
-    cdbg("scene preload start");
+    cdbg();
     this.load.image("background", `${staticPath}/background.png`);
     this.load.image(
       "mangrove-background",
@@ -89,23 +88,16 @@ class GameScene extends Phaser.Scene {
   }
 
   create() {
-    cdbg("scene create start", {
-      map,
-      username,
-      character,
-      spawnPlatform,
-      spawn,
-      partyMembers,
-    });
+    cdbg();
     // Creates the map objects
     if (map === "1") {
       mapObjects = lushyPeaksObjects;
       lushyPeaks(this);
-      cdbg("map loaded", { type: "lushyPeaks" });
+      cdbg();
     } else if (map === "2") {
       mapObjects = mangroveMeadowObjects;
       mangroveMeadow(this);
-      cdbg("map loaded", { type: "mangroveMeadow" });
+      cdbg();
     }
 
     // Creates player object
@@ -119,14 +111,14 @@ class GameScene extends Phaser.Scene {
       map,
       opponentPlayers
     );
-    cdbg("player created");
+    cdbg();
     // Adds collision between map and player
 
     mapObjects.forEach((mapObject) => {
       // Add collider between the object and each map object
       this.physics.add.collider(player, mapObject);
     });
-    cdbg("colliders added", { mapObjects: mapObjects.length });
+    cdbg();
 
     // Makes the fight element zoom in at the start of the game
     document.getElementById("fight").style.width = "60%";
@@ -141,7 +133,7 @@ class GameScene extends Phaser.Scene {
 
     // Emits player-joined and creates the op player objects
     socket.emit("player-joined", { username, character });
-    cdbg("emit player-joined", { username, character });
+    cdbg();
     fetch("/players", {
       method: "POST",
       headers: {
@@ -151,10 +143,7 @@ class GameScene extends Phaser.Scene {
     })
       .then((response) => response.json())
       .then((data) => {
-        cdbg("players fetch success", {
-          userTeam: Object.keys(data.userTeam).length,
-          opTeam: Object.keys(data.opTeam).length,
-        });
+        cdbg();
         for (const key in data.userTeam) {
           // User team
           if (key !== username) {
@@ -192,7 +181,7 @@ class GameScene extends Phaser.Scene {
       })
       .catch((error) => {
         console.error("Error:", error);
-        cdbg("players fetch error", { error: error.message });
+        cdbg();
       });
 
     // After 1 second the fight image is removed
@@ -206,7 +195,7 @@ class GameScene extends Phaser.Scene {
 
     // Code that runs when another player moves
     socket.on("move", (data) => {
-      cdbg("recv move", data);
+      cdbg();
       const opponentPlayer =
         opponentPlayers[data.username] || teamPlayers[data.username];
       // Finds player from the list
@@ -225,54 +214,43 @@ class GameScene extends Phaser.Scene {
 
     // When another player attacks, this catches it
     socket.on("attack", (data) => {
-      cdbg("recv attack", { from: data.name, x: data.x, y: data.y });
-      const scene = this;
-      // Adds projectile into scene
-      const projectile = this.physics.add.image(data.x, data.y, data.weapon);
-      projectile.setScale(data.scale);
-      projectile.setVelocity(data.velocity, 0);
-      // Makes projectile rotate
-      projectile.setAngularVelocity(data.angularVelocity);
-      projectile.body.allowGravity = false;
-
-      if (data.name in teamPlayers) {
-        for (const player in opponentPlayers) {
-          const opponentPlayer = opponentPlayers[player];
-          addOverlap(projectile, opponentPlayer);
-        }
-      } else if (data.name in opponentPlayers) {
-        for (const player in teamPlayers) {
-          const teamPlayer = teamPlayers[player];
-          // Adds overlap between team players if someone in your team throws is
-          addOverlap(projectile, teamPlayer);
-        }
-        // Adds overlap with player
-        addOverlap(projectile, player, true);
+      cdbg();
+      if (data.returning) {
+        const ownerWrapper =
+          opponentPlayers[data.name] || teamPlayers[data.name];
+        const ownerSprite = ownerWrapper ? ownerWrapper.opponent : null;
+        // Instantiate deterministic returning shuriken (non-owner)
+        const shuriken = new ReturningShuriken(
+          this,
+          { x: data.x, y: data.y },
+          ownerSprite,
+          {
+            direction: data.direction,
+            forwardDistance: data.forwardDistance || 500,
+            outwardDuration: data.outwardDuration || 380,
+            returnSpeed: data.returnSpeed || 900,
+            rotationSpeed: data.rotationSpeed || 2000,
+            scale: data.scale || 0.1,
+            damage: data.damage,
+            isOwner: false,
+          }
+        );
+        // Remote collision optional: omitted for simplicity (authoritative hits by owner only)
+        return;
       }
-      // Overlap with map
-      mapObjects.forEach((mapObject) => {
-        // Add collider between the object and each map object
-        addOverlap(projectile, mapObject);
-      });
-
-      // Add overlap funciton
-      function addOverlap(projectile, object, playerSelf = false) {
-        // Remote clients now only handle visual collision & cleanup.
-        if (object.opponent) {
-          scene.physics.add.overlap(projectile, object.opponent, function (p) {
-            p.destroy();
-          });
-        } else {
-          scene.physics.add.overlap(projectile, object, function (p) {
-            p.destroy();
-          });
-        }
-      }
+      // Basic non-returning projectile fallback (if ever used)
+      const proj = this.physics.add.image(data.x, data.y, data.weapon);
+      proj.setScale(data.scale || 0.1);
+      proj.setVelocity((data.direction || 1) * 400, 0);
+      proj.setAngularVelocity(data.rotationSpeed || 600);
+      proj.body.allowGravity = false;
     });
+
+    // Removed projectile-update/destroy listeners (no network syncing)
 
     // When another player dies
     socket.on("death", (data) => {
-      cdbg("recv death", data);
+      cdbg();
       if (data.username === username) {
         // Self death already handled via health-update listener in player.js
         return;
@@ -315,7 +293,7 @@ class GameScene extends Phaser.Scene {
 
     // When everyone is dead
     socket.on("game-over", (data) => {
-      cdbg("recv game-over", data);
+      cdbg();
       if (gameId === data.gameId) {
         gameEnded = true; // stop emitting further moves
         const gameOver = document.getElementById("game-over");
@@ -347,7 +325,7 @@ class GameScene extends Phaser.Scene {
   // Update function is a built in function that runs as much as possible. It is controlled by the phaser scene
   update() {
     if (gameEnded) return; // halt loop work after game over
-    cdbg("update tick", { dead, x: player && player.x, y: player && player.y });
+    cdbg();
     if (!dead) {
       handlePlayerMovement(this); // Handles movement
       socket.emit("move", {
@@ -358,7 +336,7 @@ class GameScene extends Phaser.Scene {
         animation: player.anims.currentAnim,
         username,
       });
-      cdbg("emit move", { x: player.x, y: player.y });
+      cdbg();
     }
     // Updates health bars
     for (const player in opponentPlayers) {
@@ -369,6 +347,8 @@ class GameScene extends Phaser.Scene {
       const opponentPlayer = teamPlayers[player];
       opponentPlayer.updateHealthBar();
     }
+
+    // No remote projectile interpolation required
   }
 }
 

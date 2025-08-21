@@ -2,12 +2,8 @@
 // NOTE: Refactored to remove circular dependency on game.js.
 // socket now comes from standalone socket.js and opponentPlayers are passed into createPlayer.
 import socket from "./socket";
-function pdbg(label, data = {}) {
-  try {
-    console.log(`[PLAYER][${new Date().toISOString()}] ${label}`, data);
-  } catch (e) {
-    console.log(`[PLAYER] ${label}`);
-  }
+function pdbg() {
+  /* logging disabled */
 }
 import { lushyPeaksObjects, base, platform } from "./Maps/lushyPeaks";
 import {
@@ -20,6 +16,7 @@ import {
   tinyPlatform6,
 } from "./Maps/mangroveMeadow";
 import { ninjaAnimations } from "./Animations/ninja";
+import ReturningShuriken from "./ReturningShuriken";
 // Globals
 let player;
 let cursors;
@@ -54,6 +51,66 @@ let spawnPlatform;
 let mapObjects;
 let map;
 let opponentPlayersRef; // injected from game.js to avoid circular import
+let fireTrailTimer = 0;
+let fireTrailInterval = 45; // ms
+const firePool = [];
+const firePoolMax = 60;
+function spawnFireFlame(scene, x, y) {
+  // Reuse small graphics objects instead of creating rectangles each time
+  let g = firePool.find((o) => !o.active);
+  if (!g) {
+    g = scene.add.graphics();
+    g.active = true;
+    firePool.push(g);
+  }
+  g.clear();
+  g.active = true;
+  g.setDepth(0); // behind player (player depth assumed >0)
+  const baseSize = Phaser.Math.Between(5, 9);
+  // Draw outer glow (red)
+  g.fillStyle(0xff3c00, 0.35);
+  g.fillCircle(0, 0, baseSize);
+  // Mid layer (orange)
+  g.fillStyle(0xff8800, 0.55);
+  g.fillCircle(0, 0, baseSize * 0.65);
+  // Core (yellow/white)
+  g.fillStyle(
+    Phaser.Display.Color.GetColor(255, Phaser.Math.Between(200, 230), 80),
+    0.9
+  );
+  g.fillCircle(0, 0, baseSize * 0.35);
+  g.x = x + Phaser.Math.Between(-3, 3);
+  g.y = y + Phaser.Math.Between(-3, 3);
+  const driftX = Phaser.Math.Between(-12, 12);
+  const driftY = Phaser.Math.Between(-18, -4);
+  const scaleTarget = Phaser.Math.FloatBetween(0.15, 0.35);
+  const duration = Phaser.Math.Between(260, 420);
+  g.scale = 1;
+  scene.tweens.add({
+    targets: g,
+    x: g.x + driftX,
+    y: g.y + driftY,
+    scale: scaleTarget,
+    alpha: 0,
+    duration,
+    ease: "Cubic.easeOut",
+    onComplete: () => {
+      g.active = false;
+      g.alpha = 1;
+      g.scale = 1;
+      g.clear();
+    },
+  });
+  // Cap pool size
+  if (firePool.length > firePoolMax) {
+    const old = firePool.find((o) => !o.active);
+    if (old) {
+      old.destroy();
+      const idx = firePool.indexOf(old);
+      if (idx >= 0) firePool.splice(idx, 1);
+    }
+  }
+}
 
 // Create player function
 export function createPlayer(
@@ -73,14 +130,7 @@ export function createPlayer(
   spawnPlatform = spawnPlatformParam;
   map = mapParam;
   opponentPlayersRef = opponentPlayersParam;
-  pdbg("createPlayer start", {
-    username,
-    character,
-    spawnPlatform,
-    spawn,
-    playersInTeam,
-    map,
-  });
+  pdbg();
   cursors = scene.input.keyboard.createCursorKeys();
 
   if (character === "Ninja") {
@@ -90,7 +140,7 @@ export function createPlayer(
   // Create player sprite!!
   player = scene.physics.add.sprite(-100, -100, "sprite");
   player.anims.play("idle", true); // Play idle animation
-  pdbg("sprite created");
+  pdbg();
 
   // Listener to detect if player leaves the world bounds
   scene.events.on("update", () => {
@@ -104,7 +154,7 @@ export function createPlayer(
             damage: 99999,
             gameId,
           });
-          pdbg("fell out of world -> hit self");
+          pdbg();
         }
       }, 500);
     }
@@ -198,99 +248,55 @@ export function createPlayer(
       if (character === "Ninja") {
         player.anims.play("throw", true); // Play throwing animation
 
-        // Variables
-        let weapon = "shuriken";
-        let scale = 0.1;
-        let velocity = 800;
-        let angularVelocity = 2000;
-        let damage = 1000;
+        // New returning shuriken projectile
+        const direction = player.flipX ? -1 : 1;
+        const config = {
+          direction,
+          username,
+          gameId,
+          isOwner: true,
+          damage: 1000,
+          rotationSpeed: 2000,
+          forwardDistance: 500,
+          arcHeight: 160,
+          outwardDuration: 380,
+          returnSpeed: 900,
+        };
+        const returning = new ReturningShuriken(
+          scene,
+          { x: player.x, y: player.y },
+          player,
+          config
+        );
 
-        // Creates the projectile
-        const projectile = scene.physics.add.image(player.x, player.y, weapon);
-        pdbg("attack start", {
-          weapon,
-          damage,
-          x: player.x,
-          y: player.y,
-          flip: player.flipX,
-        });
-        projectile.setScale(scale);
-        if (player.flipX === true) {
-          velocity = -velocity; // If the player is flipped around, the direction of the shuriken is changed
-        }
-        projectile.setVelocity(velocity, 0); // Set projectile velocity if flipped
-        projectile.body.allowGravity = false; // Disables gravity
-        projectile.setAngularVelocity(angularVelocity); // Sets rotation speed
-
-        // Adds overlap with every player in the opponent side
+        // Overlaps: enemies & map objects
+        const enemyList = [];
         if (opponentPlayersRef) {
           for (const playerId in opponentPlayersRef) {
-            const opponentPlayer = opponentPlayersRef[playerId];
-            addOverlap(projectile, opponentPlayer);
+            enemyList.push(opponentPlayersRef[playerId]);
           }
         }
+        returning.attachEnemyOverlap(enemyList);
+        // Map objects cause destroy only during outward/hover (handled internally)
+        returning.attachMapOverlap(mapObjects);
 
-        // Adds overlap with the map
-        mapObjects.forEach((mapObject) => {
-          // Add collider between the object and each map object
-          addOverlap(projectile, mapObject);
-        });
-
-        // Add overlap function
-        function addOverlap(projectile, object) {
-          // If the overlap has an opponent variable (if the object is a person)
-          if (object.opponent) {
-            scene.physics.add.overlap(
-              projectile,
-              object.opponent,
-              function (projectile) {
-                // Report hit to server instead of applying locally
-                socket.emit("hit", {
-                  attacker: username,
-                  target: object.username,
-                  damage,
-                  gameId,
-                });
-                pdbg("projectile hit opponent", {
-                  target: object.username,
-                  remainingUnknown: true,
-                });
-                projectile.destroy(); // Destroy projectile on collision
-
-                // Plays hit sound for a player
-                let hitSound = scene.sound.add("shurikenHit");
-                hitSound.setVolume(0.008); // Turns volume down
-                hitSound.play();
-              }
-            );
-          } else {
-            // If the object is a
-            scene.physics.add.overlap(
-              projectile,
-              object,
-              function (projectile) {
-                projectile.destroy(); // Destroy projectile on collision
-                // Plays sound for hitting map
-                let hitSound = scene.sound.add("shurikenHitWood");
-                hitSound.setVolume(0.01); // Turns down volume
-                hitSound.play();
-                pdbg("projectile hit map");
-              }
-            );
-          }
-        }
-        // Emits attack to other players with all the information
+        // Emit for remote clients (they will spawn a visual copy following classic straight line fallback for now)
         socket.emit("attack", {
           x: player.x,
           y: player.y,
-          weapon,
-          scale,
-          velocity,
-          angularVelocity,
-          damage,
-          name,
+          weapon: "shuriken",
+          scale: config.scale || 0.1,
+          damage: config.damage,
+          name: username,
+          returning: true,
+          direction,
+          // send timing params so remote can deterministically simulate
+          forwardDistance: config.forwardDistance,
+          outwardDuration: config.outwardDuration,
+          returnSpeed: config.returnSpeed,
+          rotationSpeed: config.rotationSpeed,
         });
-        pdbg("emit attack", { x: player.x, y: player.y });
+        pdbg();
       }
     }
   });
@@ -307,7 +313,7 @@ function updateHealthBar() {
   if (currentHealth <= 0) currentHealth = 0;
   const healthPercentage = currentHealth / maxHealth;
   const displayedWidth = healthBarWidth * healthPercentage;
-  pdbg("updateHealthBar", { currentHealth, dead });
+  pdbg();
 
   healthBar.clear(); // Clear the graphics before redrawing
 
@@ -463,6 +469,23 @@ export function handlePlayerMovement(scene) {
   updateHealthBar(); // Updates the health bar after the new player position
   playerName.setPosition(player.x, player.y - player.height + 10); // Updates the player nametag with the new position
 
+  // Fire trail (simple particle substitute)
+  fireTrailTimer += scene.game.loop.delta;
+  if (
+    !dead &&
+    fireTrailTimer >= fireTrailInterval &&
+    (isMoving || !player.body.touching.down)
+  ) {
+    fireTrailTimer = 0;
+    const baseX = player.x - (player.flipX ? -14 : 14);
+    const baseY = player.y + 8;
+    // Spawn 1-2 layered flames each interval
+    const count = Phaser.Math.Between(1, 2);
+    for (let i = 0; i < count; i++) {
+      spawnFireFlame(scene, baseX, baseY);
+    }
+  }
+
   function stopMoving() {
     player.setVelocityX(0); // Sets the player to not moving
     isMoving = false;
@@ -470,7 +493,7 @@ export function handlePlayerMovement(scene) {
 
   function jump() {
     player.anims.play("jumping", true);
-    pdbg("jump");
+    pdbg();
     player.setVelocityY(-jumpSpeed);
     isMoving = true;
     isJumping = true;
@@ -479,7 +502,7 @@ export function handlePlayerMovement(scene) {
   function wallJump() {
     canWallJump = false;
     player.anims.play("sliding", true);
-    pdbg("wallJump");
+    pdbg();
     player.setVelocityY(-jumpSpeed);
 
     const wallJumpTween = scene.tweens.add({
@@ -497,13 +520,13 @@ export function handlePlayerMovement(scene) {
 
   function fall() {
     player.anims.play("falling", true);
-    pdbg("fall");
+    pdbg();
     isJumping = false;
   }
 
   function idle() {
     player.anims.play("idle", true);
-    pdbg("idle");
+    pdbg();
   }
 }
 
@@ -522,14 +545,14 @@ socket.on("health-update", (data) => {
   if (data.gameId !== gameId) return;
   if (data.username === username) {
     currentHealth = data.health;
-    pdbg("health-update recv", { newHealth: currentHealth });
+    pdbg();
     if (currentHealth <= 0) {
       if (!dead) {
         dead = true;
         player.anims.play("dying", true);
         scene.input.enabled = false;
         player.alpha = 0.5;
-        pdbg("death animation start");
+        pdbg();
       }
       currentHealth = 0; // force exact 0
     }
