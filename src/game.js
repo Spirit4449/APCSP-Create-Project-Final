@@ -13,17 +13,19 @@
 
 import { lushyPeaks, lushyPeaksObjects } from "./Maps/lushyPeaks";
 import { mangroveMeadow, mangroveMeadowObjects } from "./Maps/mangroveMeadow";
-import {
-  createPlayer,
-  player,
-  handlePlayerMovement,
-  setCurrentHealth,
-  dead,
-} from "./player";
+import { createPlayer, player, handlePlayerMovement, dead } from "./player";
+import socket from "./socket";
 import OpPlayer from "./opPlayer";
 
-// Connect to the Socket.io server
-const socket = io("/");
+// Socket now imported from standalone module to prevent circular deps
+function cdbg(label, data = {}) {
+  try {
+    console.log(`[CLIENT][${new Date().toISOString()}] ${label}`, data);
+  } catch (e) {
+    console.log(`[CLIENT] ${label}`);
+  }
+}
+cdbg("init", { gameId: window.location.pathname });
 
 // Path to get assets
 const staticPath = "/assets";
@@ -37,22 +39,26 @@ const spawnPlatform = sessionStorage.getItem("spawnPlatform");
 const spawn = sessionStorage.getItem("spawn");
 const partyMembers = sessionStorage.getItem("partyMembers");
 const partyMembersNum = Number(partyMembers);
-const map = sessionStorage.getItem("map")
-
+const map = sessionStorage.getItem("map");
 
 // Map variale
-let mapObjects
+let mapObjects;
 
 // Lists that store all the players in player team and op team
 const opponentPlayers = [];
 const teamPlayers = [];
+let gameEnded = false; // stops update loop network emissions after game over
 
 // Phaser class to setup the game
 class GameScene extends Phaser.Scene {
   // Preloads assets
   preload() {
+    cdbg("scene preload start");
     this.load.image("background", `${staticPath}/background.png`);
-    this.load.image("mangrove-background", `${staticPath}/mangroveBackground.jpg`);
+    this.load.image(
+      "mangrove-background",
+      `${staticPath}/mangroveBackground.jpg`
+    );
     this.load.atlas(
       "sprite",
       `${staticPath}/Ninja_Spritesheet.png`,
@@ -76,8 +82,6 @@ class GameScene extends Phaser.Scene {
     this.load.image("base-right", `${staticPath}/baseRight.png`);
     this.load.image("base-top", `${staticPath}/baseTop.png`);
 
-
-
     this.load.image("shuriken", `${staticPath}/shuriken.png`);
     this.load.audio("shurikenThrow", `${staticPath}/shurikenThrow.mp3`);
     this.load.audio("shurikenHit", `${staticPath}/hit.mp3`);
@@ -85,24 +89,45 @@ class GameScene extends Phaser.Scene {
   }
 
   create() {
+    cdbg("scene create start", {
+      map,
+      username,
+      character,
+      spawnPlatform,
+      spawn,
+      partyMembers,
+    });
     // Creates the map objects
-    if (map === '1') {
-      mapObjects = lushyPeaksObjects
-      lushyPeaks(this)
-    } else if(map === '2') {
-      mapObjects = mangroveMeadowObjects
-      mangroveMeadow(this)
+    if (map === "1") {
+      mapObjects = lushyPeaksObjects;
+      lushyPeaks(this);
+      cdbg("map loaded", { type: "lushyPeaks" });
+    } else if (map === "2") {
+      mapObjects = mangroveMeadowObjects;
+      mangroveMeadow(this);
+      cdbg("map loaded", { type: "mangroveMeadow" });
     }
 
     // Creates player object
-    createPlayer(this, username, character, spawnPlatform, spawn, partyMembers, map);
+    createPlayer(
+      this,
+      username,
+      character,
+      spawnPlatform,
+      spawn,
+      partyMembers,
+      map,
+      opponentPlayers
+    );
+    cdbg("player created");
     // Adds collision between map and player
 
-    mapObjects.forEach(mapObject => {
+    mapObjects.forEach((mapObject) => {
       // Add collider between the object and each map object
       this.physics.add.collider(player, mapObject);
     });
-    
+    cdbg("colliders added", { mapObjects: mapObjects.length });
+
     // Makes the fight element zoom in at the start of the game
     document.getElementById("fight").style.width = "60%";
 
@@ -116,6 +141,7 @@ class GameScene extends Phaser.Scene {
 
     // Emits player-joined and creates the op player objects
     socket.emit("player-joined", { username, character });
+    cdbg("emit player-joined", { username, character });
     fetch("/players", {
       method: "POST",
       headers: {
@@ -125,6 +151,10 @@ class GameScene extends Phaser.Scene {
     })
       .then((response) => response.json())
       .then((data) => {
+        cdbg("players fetch success", {
+          userTeam: Object.keys(data.userTeam).length,
+          opTeam: Object.keys(data.opTeam).length,
+        });
         for (const key in data.userTeam) {
           // User team
           if (key !== username) {
@@ -140,6 +170,7 @@ class GameScene extends Phaser.Scene {
               map
             );
             teamPlayers[key] = userPlayer; // Adds player object to the list
+            cdbg("opPlayer created (user team)", { key });
           }
         }
         for (const key in data.opTeam) {
@@ -155,11 +186,13 @@ class GameScene extends Phaser.Scene {
               map
             );
             opponentPlayers[key] = opponentPlayer;
+            cdbg("opPlayer created (op team)", { key });
           }
         }
       })
       .catch((error) => {
         console.error("Error:", error);
+        cdbg("players fetch error", { error: error.message });
       });
 
     // After 1 second the fight image is removed
@@ -173,6 +206,7 @@ class GameScene extends Phaser.Scene {
 
     // Code that runs when another player moves
     socket.on("move", (data) => {
+      cdbg("recv move", data);
       const opponentPlayer =
         opponentPlayers[data.username] || teamPlayers[data.username];
       // Finds player from the list
@@ -191,6 +225,7 @@ class GameScene extends Phaser.Scene {
 
     // When another player attacks, this catches it
     socket.on("attack", (data) => {
+      cdbg("recv attack", { from: data.name, x: data.x, y: data.y });
       const scene = this;
       // Adds projectile into scene
       const projectile = this.physics.add.image(data.x, data.y, data.weapon);
@@ -215,32 +250,21 @@ class GameScene extends Phaser.Scene {
         addOverlap(projectile, player, true);
       }
       // Overlap with map
-      mapObjects.forEach(mapObject => {
+      mapObjects.forEach((mapObject) => {
         // Add collider between the object and each map object
         addOverlap(projectile, mapObject);
       });
 
       // Add overlap funciton
-      function addOverlap(projectile, object, player = false) {
+      function addOverlap(projectile, object, playerSelf = false) {
+        // Remote clients now only handle visual collision & cleanup.
         if (object.opponent) {
-          scene.physics.add.overlap(
-            projectile,
-            object.opponent,
-            function (projectile) {
-              object.opCurrentHealth -= data.damage;
-              object.updateHealthBar();
-              projectile.destroy();
-            }
-          );
-        } else if (player === true) {
-          scene.physics.add.overlap(projectile, object, function (projectile) {
-            // Subtracts 1000 health from player
-            setCurrentHealth(1000);
-            projectile.destroy();
+          scene.physics.add.overlap(projectile, object.opponent, function (p) {
+            p.destroy();
           });
         } else {
-          scene.physics.add.overlap(projectile, object, function (projectile) {
-            projectile.destroy(); // Destroy projectile on collision
+          scene.physics.add.overlap(projectile, object, function (p) {
+            p.destroy();
           });
         }
       }
@@ -248,10 +272,17 @@ class GameScene extends Phaser.Scene {
 
     // When another player dies
     socket.on("death", (data) => {
+      cdbg("recv death", data);
+      if (data.username === username) {
+        // Self death already handled via health-update listener in player.js
+        return;
+      }
       const opponentPlayer =
         opponentPlayers[data.username] || teamPlayers[data.username];
 
-      if (opponentPlayer in opponentPlayers) {
+      if (!opponentPlayer) return; // Safety guard
+
+      if (data.username in opponentPlayers) {
         document.getElementById("your-team").textContent = `Your Team: ${
           partyMembersNum - 1
         }/${partyMembers} players`;
@@ -266,16 +297,13 @@ class GameScene extends Phaser.Scene {
       // Dying animation
       opponentPlayer.opponent.anims.play("dying", true);
       opponentPlayer.opponent.alpha = 0.5;
-      // Shifts the player name down slightly
+      // Use local sprite position (server may send 0 if not persisted yet)
       opponentPlayer.opPlayerName.setPosition(
-        data.x,
+        opponentPlayer.opponent.x,
         opponentPlayer.opPlayerName.y + 30
       );
-      // Updates health bar position to be a little lower
-      opponentPlayer.updateHealthBar(
-        true,
-        data.y - (opponentPlayer.opponent.height / 2 - 24)
-      );
+      opponentPlayer.opCurrentHealth = 0; // enforce zero
+      opponentPlayer.updateHealthBar(true); // internally computes Y
 
       // Deletes the sprite from the game
       if (opponentPlayers[data.username]) {
@@ -287,7 +315,9 @@ class GameScene extends Phaser.Scene {
 
     // When everyone is dead
     socket.on("game-over", (data) => {
+      cdbg("recv game-over", data);
       if (gameId === data.gameId) {
+        gameEnded = true; // stop emitting further moves
         const gameOver = document.getElementById("game-over");
         if (data.losers.includes(username)) {
           gameOver.textContent = "You Lose";
@@ -316,6 +346,8 @@ class GameScene extends Phaser.Scene {
 
   // Update function is a built in function that runs as much as possible. It is controlled by the phaser scene
   update() {
+    if (gameEnded) return; // halt loop work after game over
+    cdbg("update tick", { dead, x: player && player.x, y: player && player.y });
     if (!dead) {
       handlePlayerMovement(this); // Handles movement
       socket.emit("move", {
@@ -326,6 +358,7 @@ class GameScene extends Phaser.Scene {
         animation: player.anims.currentAnim,
         username,
       });
+      cdbg("emit move", { x: player.x, y: player.y });
     }
     // Updates health bars
     for (const player in opponentPlayers) {
@@ -376,4 +409,4 @@ function getCookie(cookieName) {
   return "";
 }
 
-export { opponentPlayers, teamPlayers, socket };
+export { opponentPlayers, teamPlayers };

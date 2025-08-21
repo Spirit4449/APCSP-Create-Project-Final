@@ -1,10 +1,23 @@
 // matchmaking.js
 
 const socket = io("/");
+function mmdbg(label, data = {}) {
+  try {
+    console.log(`[MM][${new Date().toISOString()}] ${label}`, data);
+  } catch (e) {
+    console.log(`[MM] ${label}`);
+  }
+}
+mmdbg("matchmaking page load", { partyId: window.location.pathname });
 
 let partyId = window.location.pathname.split("/").filter(Boolean).pop();
 
 socket.on("game-started", (data) => {
+  mmdbg("recv game-started", {
+    partyId: data.partyId,
+    foundId: data.foundId,
+    gameId: data.gameId,
+  });
   // If either the found team or owner team
   if (partyId === data.foundId || partyId === data.partyId) {
     for (const team in data.gameData) {
@@ -21,7 +34,6 @@ socket.on("game-started", (data) => {
           sessionStorage.setItem("party", data.foundId);
           sessionStorage.setItem("partyMembers", data.partyMembers);
           sessionStorage.setItem("map", data.map);
-          
         }
       }
     }
@@ -31,6 +43,7 @@ socket.on("game-started", (data) => {
     playersFound.textContent = `Players Found: ${membersToFind}/${membersToFind}`;
     setTimeout(() => {
       window.location = `/game/${data.gameId}`;
+      mmdbg("navigate game", { gameId: data.gameId });
     }, 500);
   }
 });
@@ -38,6 +51,7 @@ socket.on("game-started", (data) => {
 // If a player leaves, redirects back to party
 socket.on("matchmaking-disconnect", (data) => {
   console.log("Got the disconnect message");
+  mmdbg("recv matchmaking-disconnect", data);
   if (partyId === data.partyId) {
     window.location.href = `/party/${partyId}`;
   }

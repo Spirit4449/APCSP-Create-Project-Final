@@ -2,6 +2,14 @@
 
 import { base, platform } from "./Maps/lushyPeaks";
 import { calculateSpawn, calculateMangroveSpawn } from "./player";
+import socket from "./socket";
+function odbg(label, data = {}) {
+  try {
+    console.log(`[OPP][${new Date().toISOString()}] ${label}`, data);
+  } catch (e) {
+    console.log(`[OPP] ${label}`);
+  }
+}
 export default class OpPlayer {
   constructor(
     scene,
@@ -11,7 +19,7 @@ export default class OpPlayer {
     spawnPlatform,
     spawn,
     playersInTeam,
-    map,
+    map
   ) {
     this.scene = scene;
     this.character = character;
@@ -20,12 +28,18 @@ export default class OpPlayer {
     this.spawnPlatform = spawnPlatform;
     this.spawn = spawn;
     this.map = map;
-    this.mapObjects
+    this.mapObjects;
     this.playersInTeam = playersInTeam;
     this.opMaxHealth = 8000;
     this.opCurrentHealth = 8000;
     this.opHealthBarWidth = 60;
     this.createOpPlayer();
+    odbg("construct", {
+      username: this.username,
+      team: this.team,
+      spawnPlatform: this.spawnPlatform,
+      spawn: this.spawn,
+    });
   }
 
   createOpPlayer() {
@@ -33,18 +47,19 @@ export default class OpPlayer {
     this.opponent = this.scene.physics.add.sprite(-100, -100, "sprite");
     this.opponent.body.allowGravity = false;
     this.opponent.anims.play("idle", true);
+    odbg("sprite created", { username: this.username });
 
     // Sets spawns
     if (this.spawnPlatform === "bottom") {
-      if (this.map === '1') {
+      if (this.map === "1") {
         calculateSpawn(base, this.spawn, this.opponent);
-      } else if (this.map === '2') {
+      } else if (this.map === "2") {
         calculateMangroveSpawn("bottom", this.spawn, this.opponent);
       }
     } else if (this.spawnPlatform === "top") {
-      if (this.map === '1') {
+      if (this.map === "1") {
         calculateSpawn(platform, this.spawn, this.opponent);
-      } else if (this.map === '2') {
+      } else if (this.map === "2") {
         calculateMangroveSpawn("top", this.spawn, this.opponent);
       }
     }
@@ -81,6 +96,28 @@ export default class OpPlayer {
 
     // Initially updates health bar
     this.updateHealthBar();
+    odbg("initial health bar", {
+      username: this.username,
+      hp: this.opCurrentHealth,
+    });
+
+    // Listen for health updates for this opponent
+    socket.on("health-update", (data) => {
+      // data: { username, health, gameId }
+      if (data.username === this.username) {
+        this.opCurrentHealth = data.health;
+        if (this.opCurrentHealth <= 0) {
+          this.opCurrentHealth = 0;
+          this.updateHealthBar(true); // show dead styling & 0
+        } else {
+          this.updateHealthBar();
+        }
+        odbg("health-update recv", {
+          username: this.username,
+          hp: this.opCurrentHealth,
+        });
+      }
+    });
   }
 
   updateHealthBar(dead = false, healthBarY = 0) {
@@ -88,6 +125,10 @@ export default class OpPlayer {
       // Prevents health from going negative
       this.opCurrentHealth = 0;
     }
+    odbg("updateHealthBar", {
+      username: this.username,
+      hp: this.opCurrentHealth,
+    });
     // Sets percentage of health
     const healthPercentage = this.opCurrentHealth / this.opMaxHealth;
     const displayedWidth = this.opHealthBarWidth * healthPercentage;
@@ -102,7 +143,9 @@ export default class OpPlayer {
       healthBarY = this.opponent.y - (this.opponent.height / 2 + 4);
       this.opHealthText.setText(`${this.opCurrentHealth}`);
     } else {
-      this.opHealthText.setText("");
+      // Position lower when dead (same offset logic as local player)
+      healthBarY = this.opponent.y - (this.opponent.height / 2 - 24);
+      this.opHealthText.setText(`0`);
     }
     this.opHealthBar.fillStyle(0x595959);
     this.opHealthBar.fillRect(healthBarX, healthBarY, this.opHealthBarWidth, 9);
@@ -137,4 +180,3 @@ export default class OpPlayer {
     this.opHealthText.setDepth(2);
   }
 }
-

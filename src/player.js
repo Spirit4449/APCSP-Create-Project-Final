@@ -1,6 +1,14 @@
 // player.js
-
-import { opponentPlayers, teamPlayers, socket } from "./game";
+// NOTE: Refactored to remove circular dependency on game.js.
+// socket now comes from standalone socket.js and opponentPlayers are passed into createPlayer.
+import socket from "./socket";
+function pdbg(label, data = {}) {
+  try {
+    console.log(`[PLAYER][${new Date().toISOString()}] ${label}`, data);
+  } catch (e) {
+    console.log(`[PLAYER] ${label}`);
+  }
+}
 import { lushyPeaksObjects, base, platform } from "./Maps/lushyPeaks";
 import {
   mangroveMeadowObjects,
@@ -24,7 +32,7 @@ let canAttack = true;
 let frame;
 
 let maxHealth = 8000;
-let currentHealth = 8000;
+let currentHealth = 8000; // Client-side copy (display only)
 let dead = false;
 
 let healthBarWidth = 60;
@@ -45,6 +53,7 @@ let playersInTeam;
 let spawnPlatform;
 let mapObjects;
 let map;
+let opponentPlayersRef; // injected from game.js to avoid circular import
 
 // Create player function
 export function createPlayer(
@@ -54,7 +63,8 @@ export function createPlayer(
   spawnPlatformParam,
   spawnParam,
   playersInTeamParam,
-  mapParam
+  mapParam,
+  opponentPlayersParam
 ) {
   username = name;
   scene = sceneParam;
@@ -62,6 +72,15 @@ export function createPlayer(
   playersInTeam = playersInTeamParam;
   spawnPlatform = spawnPlatformParam;
   map = mapParam;
+  opponentPlayersRef = opponentPlayersParam;
+  pdbg("createPlayer start", {
+    username,
+    character,
+    spawnPlatform,
+    spawn,
+    playersInTeam,
+    map,
+  });
   cursors = scene.input.keyboard.createCursorKeys();
 
   if (character === "Ninja") {
@@ -71,12 +90,22 @@ export function createPlayer(
   // Create player sprite!!
   player = scene.physics.add.sprite(-100, -100, "sprite");
   player.anims.play("idle", true); // Play idle animation
+  pdbg("sprite created");
 
   // Listener to detect if player leaves the world bounds
   scene.events.on("update", () => {
     if (player.y > scene.physics.world.bounds.bottom + 50) {
       setTimeout(() => {
-        currentHealth = 0; // sets health to 0 if the player leaves the world bounds
+        // Request a suicide if player falls out (treat as self-hit to 99999)
+        if (!dead) {
+          socket.emit("hit", {
+            attacker: username,
+            target: username,
+            damage: 99999,
+            gameId,
+          });
+          pdbg("fell out of world -> hit self");
+        }
       }, 500);
     }
   });
@@ -93,13 +122,13 @@ export function createPlayer(
     if (map === "1") {
       calculateSpawn(base, spawn, player);
     } else if (map === "2") {
-      calculateMangroveSpawn("bottom", spawn, player)
+      calculateMangroveSpawn("bottom", spawn, player);
     }
   } else if (spawnPlatform === "top") {
     if (map === "1") {
       calculateSpawn(platform, spawn, player);
     } else if (map === "2") {
-      calculateMangroveSpawn("top", spawn, player)
+      calculateMangroveSpawn("top", spawn, player);
     }
   }
 
@@ -178,6 +207,13 @@ export function createPlayer(
 
         // Creates the projectile
         const projectile = scene.physics.add.image(player.x, player.y, weapon);
+        pdbg("attack start", {
+          weapon,
+          damage,
+          x: player.x,
+          y: player.y,
+          flip: player.flipX,
+        });
         projectile.setScale(scale);
         if (player.flipX === true) {
           velocity = -velocity; // If the player is flipped around, the direction of the shuriken is changed
@@ -187,9 +223,11 @@ export function createPlayer(
         projectile.setAngularVelocity(angularVelocity); // Sets rotation speed
 
         // Adds overlap with every player in the opponent side
-        for (const playerId in opponentPlayers) {
-          const opponentPlayer = opponentPlayers[playerId];
-          addOverlap(projectile, opponentPlayer);
+        if (opponentPlayersRef) {
+          for (const playerId in opponentPlayersRef) {
+            const opponentPlayer = opponentPlayersRef[playerId];
+            addOverlap(projectile, opponentPlayer);
+          }
         }
 
         // Adds overlap with the map
@@ -206,8 +244,17 @@ export function createPlayer(
               projectile,
               object.opponent,
               function (projectile) {
-                object.opCurrentHealth -= damage; // Damages the player for 1000 health
-                object.updateHealthBar(); // Updates their health bar
+                // Report hit to server instead of applying locally
+                socket.emit("hit", {
+                  attacker: username,
+                  target: object.username,
+                  damage,
+                  gameId,
+                });
+                pdbg("projectile hit opponent", {
+                  target: object.username,
+                  remainingUnknown: true,
+                });
                 projectile.destroy(); // Destroy projectile on collision
 
                 // Plays hit sound for a player
@@ -227,6 +274,7 @@ export function createPlayer(
                 let hitSound = scene.sound.add("shurikenHitWood");
                 hitSound.setVolume(0.01); // Turns down volume
                 hitSound.play();
+                pdbg("projectile hit map");
               }
             );
           }
@@ -242,6 +290,7 @@ export function createPlayer(
           damage,
           name,
         });
+        pdbg("emit attack", { x: player.x, y: player.y });
       }
     }
   });
@@ -249,30 +298,16 @@ export function createPlayer(
 
 // Function to set health of player from another file
 function setCurrentHealth(damage) {
+  // Deprecated: server authoritative. Kept for compatibility (no-op display update only)
   currentHealth -= damage;
+  if (currentHealth < 0) currentHealth = 0;
   updateHealthBar();
 }
 function updateHealthBar() {
-  if (currentHealth <= 0) {
-    currentHealth = 0;
-    if (!dead) {
-      dead = true;
-      player.anims.play("dying", true);
-      scene.input.enabled = false;
-      player.alpha = 0.5;
-
-      // document.getElementById("dark-overlay").style.display = "block";
-      // document.getElementById("dark-overlay").style.backgroundColor =
-      //   "rgba(0, 0, 0, 0.1)";
-      // document.getElementById("dead").style.display = "block";
-      // document.getElementById("your-team").textContent = `Your Team: ${
-      //   playersInTeam - 1
-      // }/${playersInTeam} Players`;
-      socket.emit("death", { username, gameId, x: player.x, y: player.y });
-    }
-  }
+  if (currentHealth <= 0) currentHealth = 0;
   const healthPercentage = currentHealth / maxHealth;
   const displayedWidth = healthBarWidth * healthPercentage;
+  pdbg("updateHealthBar", { currentHealth, dead });
 
   healthBar.clear(); // Clear the graphics before redrawing
 
@@ -283,7 +318,8 @@ function updateHealthBar() {
     healthText.setText(`${currentHealth}`);
   } else {
     healthBarY = player.y - (player.height / 2 - 24);
-    healthText.setText("");
+    // Show 0 instead of blank when dead
+    healthText.setText(`0`);
     playerName.setPosition(player.x, playerName.y + 30);
   }
 
@@ -313,32 +349,31 @@ function calculateSpawn(platform, spawn, player) {
   player.y = spawnY;
 }
 function calculateMangroveSpawn(position, spawnParam, player) {
-  let platform
-  let spawn = String(spawnParam)
-  if (position === 'top') {
-    if (spawn === '1') {
-      platform = tinyPlatform1
-    } else if (spawn === '2') {
-      platform = tinyPlatform2
-    } else if (spawn === '3') {
-      platform = tinyPlatform3
+  let platform;
+  let spawn = String(spawnParam);
+  if (position === "top") {
+    if (spawn === "1") {
+      platform = tinyPlatform1;
+    } else if (spawn === "2") {
+      platform = tinyPlatform2;
+    } else if (spawn === "3") {
+      platform = tinyPlatform3;
     }
-  } else if (position === 'bottom') {
-    if (spawn === '1') {
-      platform = tinyPlatform4
-    } else if (spawn === '2') {
-      platform = tinyPlatform5
-    } else if (spawn === '3') {
-      platform = tinyPlatform6
+  } else if (position === "bottom") {
+    if (spawn === "1") {
+      platform = tinyPlatform4;
+    } else if (spawn === "2") {
+      platform = tinyPlatform5;
+    } else if (spawn === "3") {
+      platform = tinyPlatform6;
     }
   }
- 
-  const availableSpace = platform.width
-  const leftMost = platform.getBounds().left; // Leftmost x cord of the platform
-  const spawnY = platform.getTopCenter().y - player.height / 2// Gets y cordinate for the player by calculating the center and subtracting half the player height. Since the player y is at the center.
 
-  const spawnX =
-    leftMost + (availableSpace / 2) - player.width
+  const availableSpace = platform.width;
+  const leftMost = platform.getBounds().left; // Leftmost x cord of the platform
+  const spawnY = platform.getTopCenter().y - player.height / 2; // Gets y cordinate for the player by calculating the center and subtracting half the player height. Since the player y is at the center.
+
+  const spawnX = leftMost + availableSpace / 2 - player.width;
   player.x = spawnX;
   player.y = spawnY;
 }
@@ -435,6 +470,7 @@ export function handlePlayerMovement(scene) {
 
   function jump() {
     player.anims.play("jumping", true);
+    pdbg("jump");
     player.setVelocityY(-jumpSpeed);
     isMoving = true;
     isJumping = true;
@@ -443,6 +479,7 @@ export function handlePlayerMovement(scene) {
   function wallJump() {
     canWallJump = false;
     player.anims.play("sliding", true);
+    pdbg("wallJump");
     player.setVelocityY(-jumpSpeed);
 
     const wallJumpTween = scene.tweens.add({
@@ -460,12 +497,42 @@ export function handlePlayerMovement(scene) {
 
   function fall() {
     player.anims.play("falling", true);
+    pdbg("fall");
     isJumping = false;
   }
 
   function idle() {
     player.anims.play("idle", true);
+    pdbg("idle");
   }
 }
 
-export { player, frame, currentHealth, setCurrentHealth, dead, calculateSpawn, calculateMangroveSpawn };
+export {
+  player,
+  frame,
+  currentHealth,
+  setCurrentHealth,
+  dead,
+  calculateSpawn,
+  calculateMangroveSpawn,
+};
+
+// Listen for authoritative health updates from server
+socket.on("health-update", (data) => {
+  if (data.gameId !== gameId) return;
+  if (data.username === username) {
+    currentHealth = data.health;
+    pdbg("health-update recv", { newHealth: currentHealth });
+    if (currentHealth <= 0) {
+      if (!dead) {
+        dead = true;
+        player.anims.play("dying", true);
+        scene.input.enabled = false;
+        player.alpha = 0.5;
+        pdbg("death animation start");
+      }
+      currentHealth = 0; // force exact 0
+    }
+    updateHealthBar(); // always refresh (covers death case where movement loop stops)
+  }
+});

@@ -1,6 +1,14 @@
 // party.js
 
 const socket = io("/");
+function ptydbg(label, data = {}) {
+  try {
+    console.log(`[PARTY][${new Date().toISOString()}] ${label}`, data);
+  } catch (e) {
+    console.log(`[PARTY] ${label}`);
+  }
+}
+ptydbg("party page load", { partyId: window.location.pathname });
 
 // Document Variables
 const character = document.getElementById("character");
@@ -18,6 +26,7 @@ let username = getCookie("name");
 if (username) {
   // Emits user-joined to other players
   socket.emit("user-joined", { name: username, partyId });
+  ptydbg("emit user-joined", { username, partyId });
 } else {
   // If the username does not exist, player is redirected to welcome screen
   window.location.href = "/welcome";
@@ -317,11 +326,13 @@ function createRandom(team) {
 character.addEventListener("change", (event) => {
   const selectedValue = event.target.value;
   socket.emit("character-change", { selectedValue, username, partyId }); // Emits character change
+  ptydbg("emit character-change", { selectedValue });
 });
 
 let previousModeValue = mode.value;
 mode.addEventListener("click", (event) => {
   const selectedValue = event.target.value;
+  ptydbg("mode click", { selectedValue });
   fetch("/party-members", {
     // Fetches party members on mode change
     method: "POST",
@@ -368,17 +379,20 @@ mode.addEventListener("click", (event) => {
           partyId,
           members: data.members,
         });
+        ptydbg("emit mode-change", { selectedValue });
         previousModeValue = mode.value; // Sets previous mode value to current value
       }
     })
     .catch((error) => {
       console.error("Error:", error);
+      ptydbg("mode change error", { error: error.message });
     });
 });
 
 map.addEventListener("change", (event) => {
   const selectedValue = event.target.value;
   socket.emit("map-change", { selectedValue, username, partyId }); // Emits map change
+  ptydbg("emit map-change", { selectedValue });
 });
 
 readyBtn.addEventListener("click", (event) => {
@@ -392,9 +406,11 @@ readyBtn.addEventListener("click", (event) => {
     readyBtn.value = "Ready";
   }
   socket.emit("ready", { username, ready, partyId, mode: mode.value }); // Emits ready event
+  ptydbg("emit ready", { username, ready, partyId, mode: mode.value });
 });
 
 socket.on("connection", (data) => {
+  ptydbg("recv connection", { members: data.partyMembers.length - 1 });
   // Player connection only
   data.partyMembers.forEach((member) => {
     // Grabs existing players from the party
@@ -419,16 +435,17 @@ socket.on("connection", (data) => {
   });
 });
 
-
 socket.on("user-joined", (data) => {
   if (partyId === data.partyId) {
     updatePeople(data.name, "Ninja", "Not Ready");
+    ptydbg("recv user-joined", data);
   }
 });
 
 // On character change
 socket.on("character-change", (data) => {
   if (partyId === data.partyId) {
+    ptydbg("recv character-change", data);
     // Check if party is the same
     const user = document.getElementById(data.username);
     const img = user.querySelector("img");
@@ -441,6 +458,7 @@ socket.on("character-change", (data) => {
 // On mode change
 socket.on("mode-change", (data) => {
   if (partyId === data.partyId) {
+    ptydbg("recv mode-change", { mode: data.mode });
     // Check if party is the same
     mode.value = data.mode;
     checkModeValue(); // Checks mode value and sets up td's
@@ -471,11 +489,13 @@ socket.on("mode-change", (data) => {
 socket.on("map-change", (data) => {
   if (partyId === data.partyId) {
     map.value = data.map;
+    ptydbg("recv map-change", { map: data.map });
   }
 });
 
 // On drop
 socket.on("drop", (data) => {
+  ptydbg("recv drop", data);
   const allTDS = document.querySelectorAll("td");
   let count = 0;
   allTDS.forEach((checkTd) => {
@@ -524,6 +544,7 @@ socket.on("drop", (data) => {
 // On ready
 socket.on("ready", (data) => {
   if (partyId === data.party) {
+    ptydbg("recv ready", data);
     const playerDiv = document.getElementById(data.name);
     if (playerDiv) {
       const status = playerDiv.querySelector(".status");
@@ -546,6 +567,7 @@ socket.on("room-deleted", () => {
 // On matchmaking
 socket.on("matchmaking", (data) => {
   if (partyId === data.partyId) {
+    ptydbg("recv matchmaking", data);
     sessionStorage.setItem("matchmakingMembers", data.members); // Sets session storage of members so that the matchmaking screen can display it
     sessionStorage.setItem("membersToFind", data.membersToFind);
     window.location.href = `/matchmaking/${data.partyId}`; // Redirects to matchmaking for party
@@ -555,6 +577,11 @@ socket.on("matchmaking", (data) => {
 // On game start
 socket.on("game-started", (data) => {
   if (partyId === data.partyId) {
+    ptydbg("recv game-started", {
+      gameId: data.gameId,
+      partyMembers: data.partyMembers,
+      map: data.map,
+    });
     for (const team in data.gameData) {
       // For each team in the game
       for (const playerKey in data.gameData[team]) {
@@ -572,17 +599,20 @@ socket.on("game-started", (data) => {
       }
     }
     window.location = `/game/${data.gameId}`;
+    ptydbg("navigate game", { gameId: data.gameId });
   }
 });
 
 // On user disconnect
 socket.on("user-disconnected", (data) => {
   if (data.partyId === partyId) {
+    ptydbg("recv user-disconnected", data);
     const userDivs = document.querySelectorAll(".icon"); // Find all td by using icon query selector
     let userTd;
 
-    userDivs.forEach((div) => { // For each td 
-      const usernameElement = div.parentNode.querySelector(".username"); 
+    userDivs.forEach((div) => {
+      // For each td
+      const usernameElement = div.parentNode.querySelector(".username");
       // If the name of the td matches the name of the user who disconnected it sets it to a random
       if (usernameElement.textContent === data.name) {
         usernameElement.textContent = "Random";
@@ -608,7 +638,7 @@ socket.on("user-disconnected", (data) => {
       const img = userTd.querySelector("img");
       img.src = "/assets/random.png";
 
-      userTd.id = ''
+      userTd.id = "";
     } else {
       console.error("Could not remove user");
     }

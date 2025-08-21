@@ -46,6 +46,14 @@ const parties = {};
 // Dictionary of games
 const games = {};
 
+// Simple debug helper
+function dbg(label, data = {}) {
+  try {
+    console.log(`[SERVER][${new Date().toISOString()}] ${label}`, data);
+  } catch (e) {
+    console.log(`[SERVER][LOGERR] ${label}`);
+  }
+}
 
 // Default endpoint
 app.get("/", (req, res) => {
@@ -62,11 +70,9 @@ app.get("/welcome", (req, res) => {
   res.sendFile(path.join(__dirname, "dist", "welcome.html"));
 });
 
-
 app.get("/partyfull", (req, res) => {
   res.sendFile(path.join(__dirname, "dist", "/Errors/partyfull.html"));
 });
-
 
 app.get("/cannotjoin", (req, res) => {
   res.sendFile(path.join(__dirname, "dist", "/Errors/cannotjoin.html"));
@@ -75,7 +81,6 @@ app.get("/cannotjoin", (req, res) => {
 app.get("/partynotfound", (req, res) => {
   res.sendFile(path.join(__dirname, "dist", "/Errors/partynotfound.html"));
 });
-
 
 // Game endpoint
 app.get("/game/:gameid", (req, res) => {
@@ -111,6 +116,7 @@ app.get("/game/:gameid", (req, res) => {
 
 app.post("/create-name", (req, res) => {
   const name = req.body.name;
+  dbg("HTTP /create-name", { name });
   if (name && !names.includes(name)) {
     // Checks if name already exists inside of the name list
     names.push(name);
@@ -124,6 +130,7 @@ app.post("/create-name", (req, res) => {
 app.post("/players", (req, res) => {
   const gameId = req.body.gameId;
   const username = req.body.username;
+  dbg("HTTP /players", { gameId, username });
   let userTeam = {};
   let opTeam = {};
   for (const teamKey in games[gameId]) {
@@ -150,9 +157,12 @@ app.post("/players", (req, res) => {
 
 app.post("/party-members", (req, res) => {
   const partyId = req.body.partyId;
+  dbg("HTTP /party-members", { partyId });
 
   if (!parties[partyId]) {
-    return res.sendFile(path.join(__dirname, "dist", "/Errors/partynotfound.html"));
+    return res.sendFile(
+      path.join(__dirname, "dist", "/Errors/partynotfound.html")
+    );
   }
   const membersCount = parties[partyId].length - 1; // Returns members in the party. -1 accounts for the metadata
   return res.status(200).json({ membersCount, members: parties[partyId] }); // Returns party members data also
@@ -160,6 +170,7 @@ app.post("/party-members", (req, res) => {
 
 // Matchmaking
 app.get("/matchmaking/:partyid", (req, res) => {
+  dbg("HTTP GET /matchmaking enter", { partyId: req.params.partyid });
   if (!req.cookies["name"]) {
     return res.redirect("/welcome"); // If no name cookie, redirect to welcome screen
   }
@@ -183,11 +194,15 @@ app.get("/matchmaking/:partyid", (req, res) => {
     if (personFound) {
       res.sendFile(path.join(__dirname, "dist", "matchmaking.html"));
     } else {
-      return res.sendFile(path.join(__dirname, "dist", "/Errors/cannotjoin.html"));
+      return res.sendFile(
+        path.join(__dirname, "dist", "/Errors/cannotjoin.html")
+      );
     }
   } else {
     // If the party doesn't exist or it isn't in matchmaking, it will send an error message
-    return res.sendFile(path.join(__dirname, "dist", "/Errors/cannotjoin.html"));
+    return res.sendFile(
+      path.join(__dirname, "dist", "/Errors/cannotjoin.html")
+    );
   }
 
   const party1 = req.params.partyid; // Party 1 (aka user party)
@@ -195,17 +210,32 @@ app.get("/matchmaking/:partyid", (req, res) => {
   const players = Object.keys(parties[party1]).length - 1; // Number of players inside of the party minus the metadata
   const playersToFind = neededPlayers - players; // The amount of players to find is calculated by subtracting the needed players minus the players in the party
   function checkParties() {
+    dbg("matchmaking checkParties start", { party1, playersToFind, players });
     for (const party2 in parties) {
       // For each party in the parties dictionary
       const partyToFind = parties[party2];
       if (party1 !== party2) {
         // If the party is not equal to your party
+        const party2Players = Object.keys(partyToFind).length - 1;
+        const party2Matchmaking = partyToFind[0]["matchmaking"] === true;
+        const party2Map = partyToFind[0]["map"];
+        const party1Map = parties[partyId][0]["map"];
+        dbg("matchmaking candidate", {
+          party1,
+          party2,
+          party2Players,
+          playersToFind,
+          party2Matchmaking,
+          party2Map,
+          party1Map,
+        });
         if (
-          partyToFind[0]["matchmaking"] === true && // If it is in matchmaking
-          Object.keys(partyToFind).length - 1 === playersToFind && 
-          partyToFind[0]['map'] === parties[partyId][0]['map']  // If it fulfills the player requirement
+          party2Matchmaking &&
+          party2Players === playersToFind &&
+          party2Map === party1Map // If it fulfills the player requirement
         ) {
           // The server has found a party to matchmake with and will not enter matchmaking
+          dbg("match found", { party1, party2, playersToFind });
 
           // Set the variables
           parties[party1][0]["matchmaking"] = false;
@@ -250,7 +280,7 @@ app.get("/matchmaking/:partyid", (req, res) => {
             setSpawnProperties(party2Players, "top");
           }
 
-          const map = parties[partyId][0]["map"]
+          const map = parties[partyId][0]["map"];
           // After 1 second, game-started will be emit. This is to give time for the players, to enter the matchmaking screen.
           setTimeout(() => {
             io.emit("game-started", {
@@ -261,9 +291,10 @@ app.get("/matchmaking/:partyid", (req, res) => {
               partyMembers: games[gameId][party1].length,
               map,
             });
+            dbg("game-started emitted matchmaking", { gameId, party1, party2 });
           }, 1000);
         } else {
-          console.log("not found");
+          dbg("candidate not suitable", { party1, party2 });
         }
       }
     }
@@ -305,15 +336,18 @@ app.get("/party/:partyid", (req, res) => {
     if (Object.keys(parties[partyId]).length - 1 + extraSubtract === mode) {
       // Check if it is full account for 0 index
 
-      return res.sendFile(path.join(__dirname, "dist", "/Errors/partyfull.html"));
+      return res.sendFile(
+        path.join(__dirname, "dist", "/Errors/partyfull.html")
+      );
     } else {
       return res.sendFile(path.join(__dirname, "dist", "party.html"));
     }
   } else {
-    return res.sendFile(path.join(__dirname, "dist", "/Errors/partynotfound.html"));
+    return res.sendFile(
+      path.join(__dirname, "dist", "/Errors/partynotfound.html")
+    );
   }
 });
-
 
 // Not found endpoint
 app.use((req, res, next) => {
@@ -322,7 +356,9 @@ app.use((req, res, next) => {
 
 // Whenever a user joins, all of this will occur. This is the socket configuration for multi-player setup
 io.on("connection", (socket) => {
+  dbg("socket connection", { socketId: socket.id });
   socket.on("user-joined", (data) => {
+    dbg("user-joined recv", { socketId: socket.id, ...data });
     if (parties[data.partyId]) {
       for (const person in parties[data.partyId]) {
         if (parties[data.partyId][person]["name"]) {
@@ -358,6 +394,11 @@ io.on("connection", (socket) => {
       });
       // Emits connection just for that user
       socket.emit("connection", { partyMembers: parties[data.partyId] });
+      dbg("user-joined added", {
+        partyId: data.partyId,
+        name: data.name,
+        count: parties[data.partyId].length - 1,
+      });
       // Emits connection for everyone but that user
       socket.broadcast.emit("user-joined", {
         name: data.name,
@@ -369,61 +410,140 @@ io.on("connection", (socket) => {
   });
   // When a player joins, a message is sent to everyone else
   socket.on("player-joined", (data) => {
+    dbg("player-joined broadcast", data);
     socket.broadcast.emit("player-joined", { username: data.username });
   });
   // When a player moves, a message is sent to everyone else
   socket.on("move", (data) => {
+    dbg("move recv", { u: data.username, x: data.x, y: data.y });
+    // Persist last known position for death animations & potential validation
+    try {
+      for (const gameId in games) {
+        const game = games[gameId];
+        for (const teamKey in game) {
+          const team = game[teamKey];
+          for (const playerKey in team) {
+            if (team[playerKey]["name"] === data.username) {
+              team[playerKey].x = data.x;
+              team[playerKey].y = data.y;
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.log("move persistence error", e);
+    }
     socket.broadcast.emit("move", data);
   });
   // When a player attacks, a message is sent to everyone else
   socket.on("attack", (data) => {
+    dbg("attack recv", {
+      attacker: data.name,
+      x: data.x,
+      y: data.y,
+      dmg: data.damage,
+    });
     socket.broadcast.emit("attack", data);
+  });
+
+  // Server-authoritative health: client reports a successful hit it originated; server updates health & broadcasts
+  socket.on("hit", (data) => {
+    dbg("hit recv", data);
+    // data: { attacker, target, damage, gameId }
+    const { attacker, target, damage, gameId } = data;
+    if (!games[gameId]) return; // Unknown game
+    let targetPlayerObj;
+    let targetTeam;
+    for (const teamKey in games[gameId]) {
+      const team = games[gameId][teamKey];
+      for (const playerIdx in team) {
+        const p = team[playerIdx];
+        if (p.name === target) {
+          // Initialize health if not present (backwards compatibility)
+          if (typeof p.currentHealth !== "number") {
+            p.maxHealth = 8000;
+            p.currentHealth = 8000;
+          }
+          p.currentHealth -= damage;
+          if (p.currentHealth < 0) p.currentHealth = 0;
+          targetPlayerObj = p;
+          targetTeam = team;
+        }
+      }
+    }
+    if (!targetPlayerObj) return;
+    dbg("hit applied", { target, remaining: targetPlayerObj.currentHealth });
+    // Broadcast new health value
+    io.emit("health-update", {
+      username: target,
+      health: targetPlayerObj.currentHealth,
+      gameId,
+    });
+
+    // If dead trigger death + game over logic
+    if (targetPlayerObj.currentHealth === 0 && targetPlayerObj.dead !== true) {
+      targetPlayerObj.dead = true;
+      // Find position if tracked
+      const deathX = targetPlayerObj.x || 0;
+      const deathY = targetPlayerObj.y || 0;
+      io.emit("death", { username: target, gameId, x: deathX, y: deathY });
+      dbg("death emitted", { username: target, gameId });
+
+      // Check if entire team is dead
+      let allPlayersDead = true;
+      const losers = [];
+      for (const playerIdx in targetTeam) {
+        const p = targetTeam[playerIdx];
+        losers.push(p.name);
+        if (p.dead !== true) allPlayersDead = false;
+      }
+      if (allPlayersDead && games[gameId]) {
+        const gameParties = Object.keys(games[gameId]);
+        for (const party of gameParties) {
+          if (parties[party]) {
+            parties[party][0]["gameStarted"] = false;
+          }
+        }
+        io.emit("game-over", { username: target, gameId, losers });
+        // Ensure all losers have a final health-update of 0 (in case of any missed packet)
+        losers.forEach((loser) => {
+          io.emit("health-update", { username: loser, health: 0, gameId });
+        });
+        dbg("game-over emitted", { gameId, losers });
+        delete games[gameId];
+      }
+    }
   });
   // When a player dies
   socket.on("death", (data) => {
-    let playerTeam;
-    for (const teamKey in games[data.gameId]) {
-      const team = games[data.gameId][teamKey];
-      for (const playerKey in team) {
-        if (team[playerKey]["name"] === data.username) {
-          team[playerKey]["dead"] = true; // Sets the dead variable for that user to true
-          playerTeam = team; // Sets the team of that player
+    dbg("legacy death recv", data);
+    // Legacy client support: treat as hit to zero health if still alive
+    try {
+      if (!games[data.gameId]) return;
+      for (const teamKey in games[data.gameId]) {
+        const team = games[data.gameId][teamKey];
+        for (const playerKey in team) {
+          if (team[playerKey]["name"] === data.username) {
+            if (team[playerKey].dead !== true) {
+              team[playerKey].currentHealth = 0;
+              team[playerKey].dead = true;
+              io.emit("health-update", {
+                username: data.username,
+                health: 0,
+                gameId: data.gameId,
+              });
+            }
+          }
         }
       }
-    }
-    let allPlayersDead = true;
-    let losers = [];
-    for (const playerKey in playerTeam) {
-      losers.push(playerTeam[playerKey]["name"]); // If everyone was dead, the player is added to the list of losers
-      if (playerTeam[playerKey]["dead"] === false) {
-        // If someone is not dead, then allPlayersDead is false
-        allPlayersDead = false;
-      }
-    }
-    // Emits death message to all users
-    socket.broadcast.emit("death", data);
-    // If everyone is dead
-    if (allPlayersDead && games[data.gameId]) {
-      const gameParties = Object.keys(games[data.gameId]);
-      for (const party of gameParties) {
-        if (parties[party]) {
-          // Checks if the game was an internal game (no matchmaking occured since the party was already full)
-          parties[party][0]["gameStarted"] = false; // Set game to end
-        }
-      }
-      // Emits game over message
-      io.emit("game-over", {
-        username: data.username,
-        gameId: data.gameId,
-        losers, // If the player is not found in the losers dictionary, it will say they won
-      });
-      // Deletes the game from the games dicitonary
-      delete games[data.gameId];
+    } catch (e) {
+      console.log("legacy death error", e);
     }
   });
 
   // When a player changes character, a message is sent to everyone else
   socket.on("character-change", (data) => {
+    dbg("character-change", data);
     parties[data.partyId][0]["character"] = data.selectedValue; // Sets server value
     io.emit("character-change", {
       partyId: data.partyId,
@@ -434,6 +554,7 @@ io.on("connection", (socket) => {
 
   // When a player changes the mode, a message is sent to everyone else
   socket.on("mode-change", (data) => {
+    dbg("mode-change", data);
     parties[data.partyId][0]["mode"] = data.selectedValue; // Sets server value
     io.emit("mode-change", {
       partyId: data.partyId,
@@ -444,12 +565,14 @@ io.on("connection", (socket) => {
 
   // When a player changes the map, a message is sent to everyone else
   socket.on("map-change", (data) => {
+    dbg("map-change", data);
     parties[data.partyId][0]["map"] = data.selectedValue; // Sets server value
     io.emit("map-change", { partyId: data.partyId, map: data.selectedValue });
   });
 
   // When a player changes side, a message is sent to everyone else
   socket.on("team-update", (data) => {
+    dbg("team-update", data);
     for (member in parties[data.partyId]) {
       if (data.tempName === parties[data.partyId][member]["name"]) {
         parties[data.partyId][member]["team"] = data.team; // Sets server value
@@ -459,14 +582,38 @@ io.on("connection", (socket) => {
 
   // When a player drags and drops a player to another td, a message is sent to everyone else
   socket.on("drop", (data) => {
+    dbg("drop", data);
     socket.broadcast.emit("drop", data);
   });
 
   // When a player readies up, a message is sent to everyone else
   socket.on("ready", (data) => {
+    dbg("ready recv", {
+      username: data.username,
+      partyId: data.partyId,
+      ready: data.ready,
+    });
     let readyMembers = 0;
     try {
-      parties[data.partyId].forEach((member) => {
+      if (!data.partyId || !parties[data.partyId]) {
+        // Attempt to infer partyId from username
+        for (const pid in parties) {
+          if (
+            Array.isArray(parties[pid]) &&
+            parties[pid].some((m) => m && m.name === data.username)
+          ) {
+            data.partyId = pid;
+            break;
+          }
+        }
+        if (!data.partyId || !parties[data.partyId]) {
+          return; // Still can't resolve
+        }
+      }
+      const partyArr = Array.isArray(parties[data.partyId])
+        ? parties[data.partyId]
+        : [];
+      partyArr.forEach((member) => {
         if (data.username === member.name) {
           member.ready = data.ready; // Sets server value
           io.emit("ready", {
@@ -483,6 +630,7 @@ io.on("connection", (socket) => {
         readyMembers ===
         Number(Object.keys(parties[data.partyId]).length) - 1 // If all members are ready besides the metadata
       ) {
+        dbg("all ready", { partyId: data.partyId, readyMembers });
         let players = Number(data.mode);
         players *= 2; // The value needs to be multiplied by 2
         if (readyMembers < players) {
@@ -496,9 +644,15 @@ io.on("connection", (socket) => {
             members,
             membersToFind,
           });
+          dbg("enter matchmaking", {
+            partyId: data.partyId,
+            members,
+            membersToFind,
+          });
         } else {
           // If the party already has the right amount of players
           parties[data.partyId][0]["gameStarted"] = true;
+          dbg("game setup begin", { partyId: data.partyId });
 
           // Below code sets up the game for the team
           let yourTeam = [];
@@ -548,7 +702,7 @@ io.on("connection", (socket) => {
             setSpawnProperties(party2, "top");
           }
 
-          const map = parties[data.partyId][0]["map"]
+          const map = parties[data.partyId][0]["map"];
           // Emits game started
           io.emit("game-started", {
             partyId: data.partyId,
@@ -557,11 +711,13 @@ io.on("connection", (socket) => {
             partyMembers: games[gameId][data.partyId].length,
             map,
           });
+          dbg("game-started emitted", { partyId: data.partyId, gameId, map });
         }
       } else {
         // If not all members are ready, the variables are set to false just in case they are true
         parties[data.partyId][0]["matchmaking"] = false;
         parties[data.partyId][0]["gameStarted"] = false;
+        dbg("not all ready", { partyId: data.partyId, readyMembers });
       }
     } catch (error) {
       console.log(error);
@@ -570,6 +726,7 @@ io.on("connection", (socket) => {
 
   // When a player disconnects
   socket.on("disconnect", () => {
+    dbg("disconnect", { socketId: socket.id });
     let playerName;
     let partyIdToRemove;
 
