@@ -10,7 +10,7 @@ const path = require("path");
 const app = express();
 const server = http.createServer(app);
 const io = socketIo(server);
-const port = 3000;
+const port = 3002;
 
 // Parsers
 const bodyParser = require("body-parser");
@@ -402,7 +402,7 @@ io.on("connection", (socket) => {
                 : 0.05;
 
               // Server-side max speed clamp (semi-authoritative). Tune as needed.
-              const MAX_SPEED = 600; // px/s cap
+              const MAX_SPEED = 700; // px/s cap
               const MAX_DIST = MAX_SPEED * dt + 4; // allow a little leeway
 
               let reqX = data.x;

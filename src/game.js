@@ -48,9 +48,10 @@ const teamPlayers = [];
 let gameEnded = false; // stops update loop network emissions after game over
 // Net sync helpers
 let netLastSend = 0;
-const netSendIntervalMs = 1000 / 20; // throttle client move emits to ~30Hz
+const netSendIntervalMs = 1000 / 30; // throttle client move emits to ~30Hz
 let stateActive = false; // once server 'state' snapshots start, prefer them over legacy 'move'
 let lastServerState = { t: 0, players: {} };
+let hasSentInitialMove = false; // gate reconciliation until first valid publish
 
 // No remote projectile registry (deterministic simulation on each client)
 
@@ -372,6 +373,7 @@ class GameScene extends Phaser.Scene {
             : "idle",
           username,
         });
+        if (!hasSentInitialMove) hasSentInitialMove = true;
       }
       cdbg();
     }
@@ -384,18 +386,41 @@ class GameScene extends Phaser.Scene {
 
       // Reconcile local player (light correction to avoid jitter)
       const myState = playersMap[username];
-      if (myState && !dead) {
-        const errX = myState.x - player.x;
-        const errY = myState.y - player.y;
-        const err = Math.hypot(errX, errY);
-        if (err > 60) {
-          // snap if way off
-          player.x = myState.x;
-          player.y = myState.y;
-        } else if (err > 6) {
-          // gently steer toward authoritative position
-          player.x = lerp(player.x, myState.x, smoothFactor * 0.6);
-          player.y = lerp(player.y, myState.y, smoothFactor * 0.6);
+      if (myState && !dead && hasSentInitialMove) {
+        // Ignore uninitialized server positions (0,0) to prevent teleport-from-corner
+        if (
+          (myState.x === 0 && myState.y === 0) ||
+          Number.isNaN(myState.x) ||
+          Number.isNaN(myState.y)
+        ) {
+          // wait for a valid snapshot after our first move
+        } else {
+          const errX = myState.x - player.x;
+          const errY = myState.y - player.y;
+          const err = Math.hypot(errX, errY);
+          const onGround = !!(
+            player.body &&
+            player.body.touching &&
+            player.body.touching.down
+          );
+          if (onGround) {
+            // On ground: allow moderate corrections (snap if far, steer if slight)
+            if (err > 80) {
+              player.x = myState.x;
+              player.y = myState.y;
+            } else if (err > 8) {
+              player.x = lerp(player.x, myState.x, smoothFactor * 0.6);
+              player.y = lerp(player.y, myState.y, smoothFactor * 0.6);
+            }
+          } else {
+            // In air: avoid vertical rubber-band. Steer horizontally, snap vertical only if way off.
+            if (Math.abs(errX) > 8) {
+              player.x = lerp(player.x, myState.x, smoothFactor * 0.4);
+            }
+            if (Math.abs(errY) > 220) {
+              player.y = myState.y; // snap only if extremely divergent
+            }
+          }
         }
       }
 
@@ -405,6 +430,14 @@ class GameScene extends Phaser.Scene {
         const sprite = wrapper.opponent;
         const s = playersMap[name];
         if (!s) return;
+        // Skip uninitialized zero positions to avoid yanking from spawn to corner
+        if (
+          (s.x === 0 && s.y === 0) ||
+          Number.isNaN(s.x) ||
+          Number.isNaN(s.y)
+        ) {
+          return;
+        }
         const dx = s.x - sprite.x;
         const dy = s.y - sprite.y;
         const dist = Math.hypot(dx, dy);
@@ -462,7 +495,7 @@ const config = {
   physics: {
     default: "arcade",
     arcade: {
-      gravity: { y: 750 },
+      gravity: { y: 900 },
       debug: false,
     },
   },

@@ -484,7 +484,7 @@ function calculateMangroveSpawn(position, spawnParam, player) {
 
 export function handlePlayerMovement(scene) {
   const speed = 350;
-  const jumpSpeed = 500;
+  const jumpSpeed = 420;
 
   // Keys. Player can use either arrow keys or WASD
   const leftKey =
