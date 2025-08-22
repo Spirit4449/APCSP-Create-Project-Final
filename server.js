@@ -10,7 +10,7 @@ const path = require("path");
 const app = express();
 const server = http.createServer(app);
 const io = socketIo(server);
-const port = 3002;
+const port = 3000;
 
 // Parsers
 const bodyParser = require("body-parser");
@@ -332,7 +332,6 @@ app.use((req, res, next) => {
 
 // Whenever a user joins, all of this will occur. This is the socket configuration for multi-player setup
 io.on("connection", (socket) => {
-  // Optional: map socket.id to player name for future rooming (not strictly needed now)
   socket.on("user-joined", (data) => {
     if (parties[data.partyId]) {
       for (const person in parties[data.partyId]) {
@@ -384,7 +383,7 @@ io.on("connection", (socket) => {
   });
   // When a player moves, a message is sent to everyone else
   socket.on("move", (data) => {
-    // Persist last known position for authoritative state snapshots
+    // Persist last known position for death animations & potential validation
     try {
       for (const gameId in games) {
         const game = games[gameId];
@@ -392,40 +391,8 @@ io.on("connection", (socket) => {
           const team = game[teamKey];
           for (const playerKey in team) {
             if (team[playerKey]["name"] === data.username) {
-              const now = Date.now();
-              const p = team[playerKey];
-              // Initialize previous tracking
-              const prevX = typeof p.x === "number" ? p.x : data.x;
-              const prevY = typeof p.y === "number" ? p.y : data.y;
-              const dt = p._lastMoveTs
-                ? Math.max((now - p._lastMoveTs) / 1000, 0.001)
-                : 0.05;
-
-              // Server-side max speed clamp (semi-authoritative). Tune as needed.
-              const MAX_SPEED = 700; // px/s cap
-              const MAX_DIST = MAX_SPEED * dt + 4; // allow a little leeway
-
-              let reqX = data.x;
-              let reqY = data.y;
-              const dx = reqX - prevX;
-              const dy = reqY - prevY;
-              const dist = Math.hypot(dx, dy);
-              if (dist > MAX_DIST) {
-                const scale = MAX_DIST / (dist || 1);
-                reqX = prevX + dx * scale;
-                reqY = prevY + dy * scale;
-              }
-
-              p.x = reqX;
-              p.y = reqY;
-              // Persist last facing and animation (string key if possible)
-              p.flip = !!data.flip;
-              p.animation =
-                (data.animation && data.animation.key) ||
-                data.animation ||
-                p.animation ||
-                "idle";
-              p._lastMoveTs = now;
+              team[playerKey].x = data.x;
+              team[playerKey].y = data.y;
             }
           }
         }
@@ -433,8 +400,7 @@ io.on("connection", (socket) => {
     } catch (e) {
       // swallow
     }
-    // Legacy immediate relay retained for backwards compatibility (new clients use server snapshots)
-    // socket.broadcast.emit("move", data);
+    socket.broadcast.emit("move", data);
   });
   // When a player attacks, a message is sent to everyone else
   socket.on("attack", (data) => {
@@ -738,36 +704,6 @@ io.on("connection", (socket) => {
     }
   });
 });
-
-// -----------------------------
-// Server authoritative tick: broadcast throttled state snapshots for all games
-// -----------------------------
-const TICK_RATE = 20; // Hz
-const TICK_MS = Math.floor(1000 / TICK_RATE);
-setInterval(() => {
-  try {
-    const now = Date.now();
-    for (const gameId in games) {
-      const game = games[gameId];
-      const players = {};
-      for (const teamKey in game) {
-        const team = game[teamKey];
-        for (const player of team) {
-          if (!player || !player.name) continue;
-          players[player.name] = {
-            x: typeof player.x === "number" ? player.x : 0,
-            y: typeof player.y === "number" ? player.y : 0,
-            flip: !!player.flip,
-            animation: player.animation || "idle",
-          };
-        }
-      }
-      io.emit("state", { gameId, t: now, players });
-    }
-  } catch (e) {
-    // swallow
-  }
-}, TICK_MS);
 
 // Start the server
 server.listen(port, () => {

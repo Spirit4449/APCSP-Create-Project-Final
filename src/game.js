@@ -46,12 +46,6 @@ let mapObjects;
 const opponentPlayers = [];
 const teamPlayers = [];
 let gameEnded = false; // stops update loop network emissions after game over
-// Net sync helpers
-let netLastSend = 0;
-const netSendIntervalMs = 1000 / 30; // throttle client move emits to ~30Hz
-let stateActive = false; // once server 'state' snapshots start, prefer them over legacy 'move'
-let lastServerState = { t: 0, players: {} };
-let hasSentInitialMove = false; // gate reconciliation until first valid publish
 
 // No remote projectile registry (deterministic simulation on each client)
 
@@ -203,10 +197,9 @@ class GameScene extends Phaser.Scene {
     // Prewarm small dust pool
     prewarmDust(this, 8);
 
-    // Code that runs when another player moves (legacy). Disabled when stateActive.
+    // Code that runs when another player moves
     socket.on("move", (data) => {
       cdbg();
-      if (stateActive) return; // prefer authoritative snapshots
       const opponentPlayer =
         opponentPlayers[data.username] || teamPlayers[data.username];
       // Finds player from the list
@@ -234,14 +227,6 @@ class GameScene extends Phaser.Scene {
           }
         }
       }
-    });
-
-    // Authoritative server snapshots (throttled ~20Hz)
-    socket.on("state", (payload) => {
-      // payload: { gameId, t, players: { [username]: {x,y,flip,animation} } }
-      if (payload.gameId !== gameId) return;
-      lastServerState = payload;
-      stateActive = true;
     });
 
     // When another player attacks, this catches it
@@ -360,111 +345,15 @@ class GameScene extends Phaser.Scene {
     cdbg();
     if (!dead) {
       handlePlayerMovement(this); // Handles movement
-      // Throttled move emit (client-side prediction, server reconciliation)
-      const now = performance.now();
-      if (now - netLastSend >= netSendIntervalMs) {
-        netLastSend = now;
-        socket.emit("move", {
-          x: player.x,
-          y: player.y,
-          flip: player.flipX,
-          animation: player.anims.currentAnim
-            ? player.anims.currentAnim.key
-            : "idle",
-          username,
-        });
-        if (!hasSentInitialMove) hasSentInitialMove = true;
-      }
+      socket.emit("move", {
+        // Emits x and y every update
+        x: player.x,
+        y: player.y,
+        flip: player.flipX,
+        animation: player.anims.currentAnim,
+        username,
+      });
       cdbg();
-    }
-    // Apply authoritative state smoothing to opponents and reconcile local player
-    if (stateActive && lastServerState && lastServerState.players) {
-      const playersMap = lastServerState.players;
-      const dt = this.game.loop.delta / 1000;
-      const lerp = (a, b, t) => a + (b - a) * t;
-      const smoothFactor = Phaser.Math.Clamp(dt * 12, 0, 1); // responsiveness vs. smoothness
-
-      // Reconcile local player (light correction to avoid jitter)
-      const myState = playersMap[username];
-      if (myState && !dead && hasSentInitialMove) {
-        // Ignore uninitialized server positions (0,0) to prevent teleport-from-corner
-        if (
-          (myState.x === 0 && myState.y === 0) ||
-          Number.isNaN(myState.x) ||
-          Number.isNaN(myState.y)
-        ) {
-          // wait for a valid snapshot after our first move
-        } else {
-          const errX = myState.x - player.x;
-          const errY = myState.y - player.y;
-          const err = Math.hypot(errX, errY);
-          const onGround = !!(
-            player.body &&
-            player.body.touching &&
-            player.body.touching.down
-          );
-          if (onGround) {
-            // On ground: allow moderate corrections (snap if far, steer if slight)
-            if (err > 80) {
-              player.x = myState.x;
-              player.y = myState.y;
-            } else if (err > 8) {
-              player.x = lerp(player.x, myState.x, smoothFactor * 0.6);
-              player.y = lerp(player.y, myState.y, smoothFactor * 0.6);
-            }
-          } else {
-            // In air: avoid vertical rubber-band. Steer horizontally, snap vertical only if way off.
-            if (Math.abs(errX) > 8) {
-              player.x = lerp(player.x, myState.x, smoothFactor * 0.4);
-            }
-            if (Math.abs(errY) > 220) {
-              player.y = myState.y; // snap only if extremely divergent
-            }
-          }
-        }
-      }
-
-      // Update opponents (both enemy and user team mirror)
-      const applyTo = (wrapper, name) => {
-        if (!wrapper) return;
-        const sprite = wrapper.opponent;
-        const s = playersMap[name];
-        if (!s) return;
-        // Skip uninitialized zero positions to avoid yanking from spawn to corner
-        if (
-          (s.x === 0 && s.y === 0) ||
-          Number.isNaN(s.x) ||
-          Number.isNaN(s.y)
-        ) {
-          return;
-        }
-        const dx = s.x - sprite.x;
-        const dy = s.y - sprite.y;
-        const dist = Math.hypot(dx, dy);
-        if (dist > 100) {
-          sprite.x = s.x;
-          sprite.y = s.y;
-        } else {
-          sprite.x = lerp(sprite.x, s.x, smoothFactor);
-          sprite.y = lerp(sprite.y, s.y, smoothFactor);
-        }
-        sprite.flipX = !!s.flip;
-        if (s.animation) {
-          sprite.anims.play(s.animation, true);
-        }
-        // Update name tag position
-        wrapper.opPlayerName.setPosition(
-          sprite.x,
-          sprite.y - sprite.height + 10
-        );
-      };
-
-      for (const name in opponentPlayers) {
-        applyTo(opponentPlayers[name], name);
-      }
-      for (const name in teamPlayers) {
-        applyTo(teamPlayers[name], name);
-      }
     }
     // Updates health bars
     for (const player in opponentPlayers) {
@@ -495,7 +384,7 @@ const config = {
   physics: {
     default: "arcade",
     arcade: {
-      gravity: { y: 900 },
+      gravity: { y: 750 },
       debug: false,
     },
   },
