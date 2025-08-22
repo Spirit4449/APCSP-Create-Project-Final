@@ -35,6 +35,31 @@ if (username) {
 // Sets username text to the username
 document.getElementById("username-text").textContent = username;
 
+// Helper to set lobby background based on map value
+function setLobbyBackground(mapValue) {
+  const v = String(mapValue);
+  if (v === "2") {
+    // Mangrove Meadow
+    document.body.style.backgroundImage = 'url("/assets/bg3.jpg")';
+  } else {
+    // Default map
+    document.body.style.backgroundImage = 'url("/assets/bg2.jpg")';
+  }
+}
+
+// Initialize the lobby with initial platform setup
+checkModeValue();
+
+// Set initial background based on current select value
+setLobbyBackground(map.value);
+
+// Set up drag and drop for initial slots
+document.querySelectorAll(".character-slot").forEach((slot) => {
+  const platform = slot.parentElement;
+  const team = platform.getAttribute("data-team");
+  setupDragAndDrop(slot, team);
+});
+
 const party = document.getElementById("party");
 
 // Popup to copy id to clipboard
@@ -42,43 +67,58 @@ let popup;
 // Mouse hover
 party.addEventListener("mouseover", (event) => {
   popup = document.createElement("div"); // Creates popup
+  popup.className = "party-popup";
 
   popup.textContent = `${window.location.href}`; // Sets text to the url of the window
-  popup.style.padding = "3px 10px";
-  popup.style.color = "white";
-  popup.style.position = "absolute";
-  popup.style.borderRadius = "5px";
-  popup.style.backgroundColor = "#2F2F2F";
 
-  const partyCenterX = party.offsetLeft + party.offsetWidth / 2 - 250;
+  const partyCenterX = party.offsetLeft + party.offsetWidth / 2 - 150;
   const partyY = party.offsetTop;
 
   popup.style.left = partyCenterX + "px";
-  popup.style.top = partyY + 40 + "px";
+  popup.style.top = partyY + 55 + "px"; // Lower position
 
   document.body.appendChild(popup);
 });
 
 party.addEventListener("mouseout", (event) => {
-  popup.remove();
+  if (popup) {
+    popup.remove();
+  }
 });
 
 party.addEventListener("click", (event) => {
-  copyInvite(popup);
-  setTimeout(() => {
-    // Removes clicked text after 2 seconds
-    popup.textContent = window.location.href;
-    popup.style.backgroundColor = "#2F2F2F";
-  }, 2000);
+  if (popup) {
+    copyInvite(popup);
+    setTimeout(() => {
+      // Removes clicked text after 2 seconds
+      if (popup) {
+        popup.textContent = window.location.href;
+        popup.style.backgroundColor = "#2F2F2F";
+      }
+    }, 2000);
+  }
 });
 
 function copyInvite(popup) {
-  if (navigator.clipboard) {
+  if (navigator.clipboard && popup) {
     navigator.clipboard
       .writeText(window.location.href) // Writes window URL to clipboard
       .then(() => {
         popup.textContent = "Copied!";
         popup.style.backgroundColor = "green";
+      })
+      .catch((error) => {
+        console.error("Failed to copy text: ", error);
+      });
+  }
+}
+
+function copyInviteSimple() {
+  if (navigator.clipboard) {
+    navigator.clipboard
+      .writeText(window.location.href) // Writes window URL to clipboard
+      .then(() => {
+        console.log("Invite link copied to clipboard");
       })
       .catch((error) => {
         console.error("Failed to copy text: ", error);
@@ -100,226 +140,311 @@ signOut.addEventListener("click", (event) => {
   window.location.href = "/welcome"; // Redirects user to welcome screen
 });
 
-const yourTeam = document.getElementById("your-team");
-const opTeam = document.getElementById("op-team");
+const yourTeam = document.getElementById("lobby-area");
+const opTeam = document.getElementById("lobby-area");
 
 function checkModeValue() {
-  // Finds the amount of people
-  const peopleCount = yourTeam.children.length;
+  const lobbyArea = document.getElementById("lobby-area");
+
+  // Get all existing platforms
+  const yourPlatforms = document.querySelectorAll(
+    '.platform[data-team="your-team"]'
+  );
+  const opPlatforms = document.querySelectorAll(
+    '.platform[data-team="op-team"]'
+  );
+
   let targetCount;
-  // Uses switch statement to find the value of mode
   switch (mode.value) {
     case "1":
       targetCount = 1;
+      lobbyArea.className = "mode-1";
       break;
     case "2":
       targetCount = 2;
+      lobbyArea.className = "mode-2";
       break;
     case "3":
       targetCount = 3;
+      lobbyArea.className = "mode-3";
       break;
     default:
       targetCount = 1;
+      lobbyArea.className = "mode-1";
   }
 
-  // If the current count matches the target count, return
-  if (peopleCount === targetCount) {
-    return;
-  }
-
-  // If the current count is greater than the target count, remove extra cells
-  if (peopleCount > targetCount) {
-    for (let i = peopleCount - 1; i >= targetCount; i--) {
-      yourTeam.removeChild(yourTeam.lastChild);
-      opTeam.removeChild(opTeam.lastChild);
+  // Remove extra platforms if needed
+  if (yourPlatforms.length > targetCount) {
+    for (let i = yourPlatforms.length - 1; i >= targetCount; i--) {
+      yourPlatforms[i].remove();
+      opPlatforms[i].remove();
     }
   }
 
-  // If more cells need to be created, they are created by "count"
-  count = targetCount - peopleCount;
-  for (let i = 0; i < count; i++) {
-    createRandom(yourTeam);
-    createRandom(opTeam);
+  // Add platforms if needed
+  if (yourPlatforms.length < targetCount) {
+    for (let i = yourPlatforms.length + 1; i <= targetCount; i++) {
+      createPlatform("your-team", i);
+      createPlatform("op-team", i);
+    }
+  }
+}
+
+function createPlatform(team, slotNumber) {
+  const lobbyArea = document.getElementById("lobby-area");
+
+  // Create platform
+  const platform = document.createElement("div");
+  platform.className = `platform ${team}-${slotNumber}`;
+  platform.setAttribute("data-team", team);
+  platform.setAttribute("data-slot", slotNumber);
+
+  // Create character slot
+  const characterSlot = document.createElement("div");
+  characterSlot.className = "character-slot empty";
+  characterSlot.id = `${
+    team === "your-team" ? "your" : "op"
+  }-slot-${slotNumber}`;
+
+  // Create username element
+  const username = document.createElement("div");
+  username.className = team === "op-team" ? "username op-player" : "username";
+  username.textContent = "Random";
+
+  // Create character sprite
+  const sprite = document.createElement("img");
+  sprite.className = "character-sprite random";
+  sprite.src = "/assets/random.png";
+  sprite.alt = "Random";
+
+  // Create status element
+  const status = document.createElement("div");
+  status.className = "status invite";
+  status.textContent = "Invite";
+  status.style.cursor = "pointer";
+
+  // Add invite click functionality
+  status.addEventListener("click", (event) => {
+    if (status.classList.contains("invite")) {
+      copyInviteSimple();
+      status.textContent = "Copied!";
+      setTimeout(() => {
+        status.textContent = "Invite";
+      }, 1000);
+    }
+  });
+
+  // Assemble the structure
+  characterSlot.appendChild(username);
+  characterSlot.appendChild(sprite);
+  characterSlot.appendChild(status);
+  platform.appendChild(characterSlot);
+  // Add platform image under the character slot so it stacks vertically
+  const platformImage = document.createElement("div");
+  platformImage.className = "platform-image";
+  platform.appendChild(platformImage);
+
+  // Add drag and drop functionality
+  setupDragAndDrop(characterSlot, team);
+
+  lobbyArea.appendChild(platform);
+}
+
+function setupDragAndDrop(characterSlot, team) {
+  // Make draggable
+  characterSlot.draggable = true;
+
+  characterSlot.addEventListener("dragstart", (event) => {
+    const username = characterSlot.querySelector(".username").textContent;
+    const character = "Ninja"; // Default for now
+    const status = characterSlot.querySelector(".status").textContent;
+
+    if (username !== "Random") {
+      event.dataTransfer.setData(
+        "text/plain",
+        `${username.replace(" (You)", "")},${character},${status}`
+      );
+      characterSlot.classList.add("dragging");
+
+      // Create a custom drag image that's smaller
+      const dragImage = characterSlot.cloneNode(true);
+      dragImage.style.transform = "scale(0.8)";
+      dragImage.style.opacity = "0.8";
+      document.body.appendChild(dragImage);
+      event.dataTransfer.setDragImage(dragImage, 30, 30);
+      setTimeout(() => document.body.removeChild(dragImage), 0);
+    } else {
+      event.preventDefault();
+    }
+  });
+
+  characterSlot.addEventListener("dragend", () => {
+    characterSlot.classList.remove("dragging");
+  });
+
+  // Drop zone functionality
+  characterSlot.addEventListener("dragenter", (event) => {
+    event.preventDefault();
+  });
+
+  characterSlot.addEventListener("dragover", (event) => {
+    event.preventDefault();
+    characterSlot.parentElement.classList.add("drag-over");
+  });
+
+  characterSlot.addEventListener("dragleave", (event) => {
+    event.preventDefault();
+    // Only remove if we're actually leaving the element
+    if (!characterSlot.contains(event.relatedTarget)) {
+      characterSlot.parentElement.classList.remove("drag-over");
+    }
+  });
+
+  characterSlot.addEventListener("drop", (event) => {
+    event.preventDefault();
+    characterSlot.parentElement.classList.remove("drag-over");
+
+    const data = event.dataTransfer.getData("text/plain");
+    if (!data) return;
+
+    const [name, character, ready] = data.split(",");
+
+    // Find the source slot
+    const sourceSlot =
+      document.getElementById(name) ||
+      Array.from(document.querySelectorAll(".character-slot")).find((slot) =>
+        slot.querySelector(".username").textContent.includes(name)
+      );
+
+    if (sourceSlot && sourceSlot !== characterSlot) {
+      // Swap content
+      swapCharacterSlots(sourceSlot, characterSlot, name, character, ready);
+
+      // Emit team update
+      const platform = characterSlot.parentElement;
+      const teamName = platform.getAttribute("data-team");
+      socket.emit("team-update", {
+        tempName: name,
+        partyId,
+        team: teamName,
+      });
+
+      // Emit drop event
+      const allSlots = document.querySelectorAll(".character-slot");
+      let slotIndex = Array.from(allSlots).indexOf(characterSlot) + 1;
+      socket.emit("drop", {
+        name,
+        character,
+        ready,
+        count: slotIndex,
+      });
+    }
+  });
+}
+
+function swapCharacterSlots(
+  sourceSlot,
+  targetSlot,
+  draggedName,
+  draggedCharacter,
+  draggedReady
+) {
+  // Get current target slot content
+  const targetUsername = targetSlot.querySelector(".username").textContent;
+  const targetSprite = targetSlot.querySelector(".character-sprite").src;
+  const targetStatus = targetSlot.querySelector(".status").textContent;
+
+  // Update target slot with dragged content
+  updateCharacterSlot(
+    targetSlot,
+    `${draggedName} (You)`,
+    draggedCharacter,
+    draggedReady
+  );
+
+  // Update source slot with target content (or make it random if target was random)
+  if (targetUsername === "Random") {
+    updateCharacterSlot(sourceSlot, "Random", "Random", "Invite", true);
+  } else {
+    updateCharacterSlot(sourceSlot, targetUsername, "Ninja", targetStatus);
+  }
+}
+
+function updateCharacterSlot(slot, name, character, status, isRandom = false) {
+  const username = slot.querySelector(".username");
+  const sprite = slot.querySelector(".character-sprite");
+  const statusEl = slot.querySelector(".status");
+
+  username.textContent = name;
+  slot.id = name === "Random" ? "" : name.replace(" (You)", "");
+
+  if (isRandom || name === "Random") {
+    sprite.src = "/assets/random.png";
+    sprite.className = "character-sprite random";
+    statusEl.className = "status invite";
+    statusEl.textContent = "Invite";
+    statusEl.style.cursor = "pointer";
+    slot.className = "character-slot empty";
+  } else {
+    if (character === "Ninja") {
+      sprite.src = "/assets/ninjaIcon.png";
+    }
+    sprite.className = "character-sprite";
+
+    // Update status styling
+    statusEl.textContent = status;
+    if (status === "Ready") {
+      statusEl.className = "status ready";
+    } else if (status === "Not Ready" || status === "Not ready") {
+      statusEl.className = "status not-ready";
+    }
+
+    // Update slot styling based on team
+    const platform = slot.parentElement;
+    if (platform.getAttribute("data-team") === "your-team") {
+      slot.className = "character-slot player-display";
+    } else {
+      slot.className = "character-slot op-display";
+    }
   }
 }
 
 function updatePeople(name, character, ready) {
-  const allTdElements = document.querySelectorAll("td");
+  const allCharacterSlots = document.querySelectorAll(".character-slot");
   let conditionMet = false;
   let tempName = name;
   if (name.includes(" (You)")) {
     tempName = name.replace(" (You)", "").trim();
   }
 
-  for (let i = 0; i < allTdElements.length; i++) {
-    const td = allTdElements[i];
-    if (td.classList.contains("player-display")) {
+  for (let i = 0; i < allCharacterSlots.length; i++) {
+    const slot = allCharacterSlots[i];
+    const platform = slot.parentElement;
+    const teamName = platform.getAttribute("data-team");
+
+    if (slot.classList.contains("player-display") || teamName === "your-team") {
       socket.emit("team-update", { tempName, partyId, team: "your-team" });
     } else {
       socket.emit("team-update", { tempName, partyId, team: "op-team" });
     }
-    Array.from(td.children).forEach((element) => {
-      if (element.tagName === "P" && element.textContent === "Random") {
-        td.id = tempName;
-        td.addEventListener("dragstart", (event) => {
-          event.dataTransfer.setData(
-            "text/plain",
-            `${tempName},${character},${ready}`
-          );
-        });
-        element.textContent = name;
-        const img = td.querySelector("img");
-        if (character === "Ninja") {
-          img.src = "/assets/ninjasmallicon.png";
-        }
-        const readyElement = td.querySelector(".status");
-        readyElement.textContent = ready;
-        readyElement.style.color = "";
-        readyElement.style.cursor = "";
-        conditionMet = true;
-      }
-    });
-    if (conditionMet) {
-      return;
-    }
-  }
-}
 
-function createRandom(team) {
-  // Creates html for a random user
-  var td = document.createElement("td");
-  var username = document.createElement("p");
-  username.classList.add("username");
-  username.textContent = "Random";
+    const usernameElement = slot.querySelector(".username");
+    if (usernameElement && usernameElement.textContent === "Random") {
+      updateCharacterSlot(slot, name, character, ready);
 
-  var iconDiv = document.createElement("div");
-  iconDiv.classList.add("icon");
-
-  var iconImg = document.createElement("img");
-  iconImg.src = "/assets/random.png";
-  iconImg.alt = "";
-
-  iconDiv.appendChild(iconImg);
-
-  var statusDiv = document.createElement("div");
-  statusDiv.classList.add("status");
-  statusDiv.style.color = "yellow";
-  statusDiv.textContent = "Invite";
-  statusDiv.style.cursor = "pointer";
-  statusDiv.addEventListener("click", (event) => {
-    if (statusDiv.style.cursor === "pointer") {
-      copyInvite();
-      statusDiv.textContent = "Copied!";
-      setTimeout(() => {
-        statusDiv.textContent = "Invite";
-      }, 1000);
-    }
-  });
-
-  td.appendChild(username);
-  td.appendChild(iconDiv);
-  td.appendChild(statusDiv);
-
-  // Allows the td to be dragged
-  td.draggable = true;
-
-  td.addEventListener("dragenter", (event) => {
-    event.preventDefault(); // Prevents default functions of dragenter
-  });
-
-  td.addEventListener("dragover", (event) => {
-    event.preventDefault();
-    td.style.border = "7px solid yellow"; // Creates a yellow highlight on drag
-  });
-
-  td.addEventListener("dragleave", (event) => {
-    event.preventDefault();
-    td.style.border = ""; // Removes the yellow highlight on drag leave
-  });
-
-  td.addEventListener("drop", (event) => {
-    event.preventDefault(); // Prevents default action
-
-    td.style.border = ""; // Removes border
-    statusDiv.style.color = ""; // Makes the color of status to red
-    var data = event.dataTransfer.getData("text/plain");
-    data = data.split(","); // Gets data and puts it in the list data
-
-    const owner = document.getElementById(data[0]); // Finds where the drag came from by using the id of the name
-    const usernameElement = owner.querySelector(".username");
-    const img = owner.querySelector("img");
-    const status = owner.querySelector(".status");
-    // If the owner element was a random it sets the dragged element to a random
-    if (username.textContent !== "Random") {
-      usernameElement.textContent = username.textContent;
-      img.src = iconImg.src;
-      status.textContent = statusDiv.textContent;
-      status.style.color = "";
-
-      owner.id = username;
-      // If the owner element was not a random, it sets it to the details
-    } else {
-      usernameElement.textContent = "Random";
-      img.src = "/assets/random.png";
-      status.textContent = "Invite";
-      status.style.color = "yellow";
-      owner.id = "";
-    }
-
-    username.textContent = `${data[0]} (You)`; // Adds name + (you)
-    if (data[1] === "Ninja") {
-      iconImg.src = "/assets/ninjasmallicon.png";
-    }
-    statusDiv.textContent = data[2];
-    td.id = data[0];
-
-    // Sets dragstart
-    td.addEventListener("dragstart", (event) => {
-      event.dataTransfer.setData(
-        "text/plain",
-        `${data[0]},${data[1]},${data[2]}`
-      );
-    });
-
-    // Emits team update
-    if (team === yourTeam) {
-      socket.emit("team-update", {
-        tempName: data[0],
-        partyId,
-        team: "your-team",
+      // Set up drag functionality
+      slot.id = tempName;
+      slot.draggable = true;
+      slot.addEventListener("dragstart", (event) => {
+        event.dataTransfer.setData(
+          "text/plain",
+          `${tempName},${character},${ready}`
+        );
       });
-    } else if (team === opTeam) {
-      socket.emit("team-update", {
-        tempName: data[0],
-        partyId,
-        team: "op-team",
-      });
+
+      conditionMet = true;
+      break;
     }
-
-    // Emits drop to everyone else
-    const allTDS = document.querySelectorAll("td");
-    let count = 0;
-    allTDS.forEach((checkTd) => {
-      count++;
-      if (td === checkTd) {
-        socket.emit("drop", {
-          // Figures out where the td is and sends the index to the other users
-          name: data[0],
-          character: data[1],
-          ready: data[2],
-          count,
-        });
-      }
-    });
-  });
-
-  if (team === yourTeam) {
-    td.classList.add("player-display"); // Adds player styling
-    document.getElementById("your-team").appendChild(td); // Appends to user side
-  } else if (team === opTeam) {
-    td.classList.add("op-display"); // Adds op styling
-    username.style.color = "#ffb496";
-    document.getElementById("op-team").appendChild(td); // Appends to op side
   }
 }
 
@@ -393,6 +518,8 @@ map.addEventListener("change", (event) => {
   const selectedValue = event.target.value;
   socket.emit("map-change", { selectedValue, username, partyId }); // Emits map change
   ptydbg("emit map-change", { selectedValue });
+  // Update lobby background on local change
+  setLobbyBackground(selectedValue);
 });
 
 readyBtn.addEventListener("click", (event) => {
@@ -448,9 +575,12 @@ socket.on("character-change", (data) => {
     ptydbg("recv character-change", data);
     // Check if party is the same
     const user = document.getElementById(data.username);
-    const img = user.querySelector("img");
-    if (data.character === "Ninja") {
-      img.src = "/assets/ninjasmallicon.png";
+    if (user) {
+      const img = user.querySelector(".character-sprite");
+      if (data.character === "Ninja") {
+        img.src = "/assets/ninjaIcon.png";
+        img.className = "character-sprite";
+      }
     }
   }
 });
@@ -490,53 +620,50 @@ socket.on("map-change", (data) => {
   if (partyId === data.partyId) {
     map.value = data.map;
     ptydbg("recv map-change", { map: data.map });
+    // Sync background on remote updates as well
+    setLobbyBackground(data.map);
   }
 });
 
 // On drop
 socket.on("drop", (data) => {
   ptydbg("recv drop", data);
-  const allTDS = document.querySelectorAll("td");
+  const allSlots = document.querySelectorAll(".character-slot");
   let count = 0;
-  allTDS.forEach((checkTd) => {
-    // Finds index of td
+  allSlots.forEach((slot) => {
+    // Finds index of slot
     count++;
     if (count === data.count) {
       // If the index matches
-      // Gets the information from the new td
-      const usernameElement = checkTd.querySelector("p");
-      const imgElement = checkTd.querySelector("img");
-      const statusElement = checkTd.querySelector(".status");
+      // Gets the information from the new slot
+      const usernameElement = slot.querySelector(".username");
+      const imgElement = slot.querySelector(".character-sprite");
+      const statusElement = slot.querySelector(".status");
 
-      const previousTd = document.getElementById(data.name); // Finds previous td from id
-      // Gets information from old td
-      const username = previousTd.querySelector("p");
-      const img = previousTd.querySelector("img");
-      const status = previousTd.querySelector(".status");
-      // If new td is not a random, it sets the information of the old td to the information of the new td
-      if (usernameElement.textContent !== "Random") {
-        username.textContent = usernameElement.textContent;
-        img.src = imgElement.src;
-        status.textContent = statusElement.textContent;
-        status.style.color = "";
-        previousTd.id = usernameElement.textContent;
-      } else {
-        // If the new td is a random, sets old td to a random
-        username.textContent = "Random";
-        img.src = "/assets/random.png";
-        status.textContent = "Invite";
-        status.style.color = "yellow";
-        previousTd.id = "";
-      }
+      const previousSlot = document.getElementById(data.name); // Finds previous slot from id
+      if (previousSlot) {
+        // Gets information from old slot
+        const username = previousSlot.querySelector(".username");
+        const img = previousSlot.querySelector(".character-sprite");
+        const status = previousSlot.querySelector(".status");
 
-      // Sets the information of the new td
-      usernameElement.textContent = data.name;
-      if (data.character === "Ninja") {
-        imgElement.src = "/assets/ninjasmallicon.png";
+        // If new slot is not a random, it sets the information of the old slot to the information of the new slot
+        if (usernameElement.textContent !== "Random") {
+          username.textContent = usernameElement.textContent;
+          img.src = imgElement.src;
+          img.className = imgElement.className;
+          status.textContent = statusElement.textContent;
+          status.className = statusElement.className;
+          previousSlot.id = usernameElement.textContent.replace(" (You)", "");
+        } else {
+          // If the new slot is a random, sets old slot to a random
+          updateCharacterSlot(previousSlot, "Random", "Random", "Invite", true);
+        }
+
+        // Sets the information of the new slot
+        updateCharacterSlot(slot, data.name, data.character, data.ready);
+        slot.id = data.name;
       }
-      statusElement.textContent = data.ready;
-      statusElement.style.color = "";
-      checkTd.id = data.name;
     }
   });
 });
@@ -545,15 +672,15 @@ socket.on("drop", (data) => {
 socket.on("ready", (data) => {
   if (partyId === data.party) {
     ptydbg("recv ready", data);
-    const playerDiv = document.getElementById(data.name);
-    if (playerDiv) {
-      const status = playerDiv.querySelector(".status");
+    const playerSlot = document.getElementById(data.name);
+    if (playerSlot) {
+      const status = playerSlot.querySelector(".status");
       if (data.ready === true) {
         status.textContent = "Ready";
-        status.style.color = "#23EC63"; // Color green
+        status.className = "status ready";
       } else if (data.ready === false) {
         status.textContent = "Not Ready";
-        status.style.color = ""; // Color red
+        status.className = "status not-ready";
       }
     }
   }
@@ -607,38 +734,35 @@ socket.on("game-started", (data) => {
 socket.on("user-disconnected", (data) => {
   if (data.partyId === partyId) {
     ptydbg("recv user-disconnected", data);
-    const userDivs = document.querySelectorAll(".icon"); // Find all td by using icon query selector
-    let userTd;
+    const userSlots = document.querySelectorAll(".character-slot"); // Find all slots
+    let userSlot;
 
-    userDivs.forEach((div) => {
-      // For each td
-      const usernameElement = div.parentNode.querySelector(".username");
-      // If the name of the td matches the name of the user who disconnected it sets it to a random
+    userSlots.forEach((slot) => {
+      // For each slot
+      const usernameElement = slot.querySelector(".username");
+      // If the name of the slot matches the name of the user who disconnected it sets it to a random
       if (usernameElement.textContent === data.name) {
-        usernameElement.textContent = "Random";
-        userTd = div.parentNode; // Sets the variable userTd to the parent of username (the actual td)
+        userSlot = slot; // Sets the variable userSlot to the actual slot
         return;
       }
     });
 
-    // If a td exists, reset it back to random
-    if (userTd) {
-      const ready = userTd.querySelector(".status");
-      ready.textContent = "Invite";
-      ready.style.color = "yellow";
-      ready.style.cursor = "pointer";
+    // If a slot exists, reset it back to random
+    if (userSlot) {
+      updateCharacterSlot(userSlot, "Random", "Random", "Invite", true);
+
+      const ready = userSlot.querySelector(".status");
       ready.addEventListener("click", (event) => {
-        copyInvite();
-        ready.textContent = "Copied!";
-        setTimeout(() => {
-          ready.textContent = "Invite";
-        }, 1000);
+        if (ready.classList.contains("invite")) {
+          copyInviteSimple();
+          ready.textContent = "Copied!";
+          setTimeout(() => {
+            ready.textContent = "Invite";
+          }, 1000);
+        }
       });
 
-      const img = userTd.querySelector("img");
-      img.src = "/assets/random.png";
-
-      userTd.id = "";
+      userSlot.id = "";
     } else {
       console.error("Could not remove user");
     }
