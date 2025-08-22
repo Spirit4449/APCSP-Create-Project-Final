@@ -138,8 +138,6 @@ class GameScene extends Phaser.Scene {
       "opposing-team"
     ).textContent = `Opposing Team: ${partyMembers}/${partyMembers} players`;
 
-    // Join per-game room for scoped server broadcasts
-    socket.emit("join-game", { gameId });
     // Emits player-joined and creates the op player objects
     socket.emit("player-joined", { username, character });
     cdbg();
@@ -369,9 +367,11 @@ class GameScene extends Phaser.Scene {
         socket.emit("move", {
           x: player.x,
           y: player.y,
-          f: player.flipX, // short key for flip
-          a: player.anims.currentAnim ? player.anims.currentAnim.key : "idle", // short key for animation
-          u: username, // short key for username
+          flip: player.flipX,
+          animation: player.anims.currentAnim
+            ? player.anims.currentAnim.key
+            : "idle",
+          username,
         });
         if (!hasSentInitialMove) hasSentInitialMove = true;
       }

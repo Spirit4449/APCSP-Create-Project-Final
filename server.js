@@ -20,21 +20,20 @@ app.use(express.urlencoded({ extended: true }));
 app.use(bodyParser.json());
 app.use(cookieParser());
 
-const isProd = true;
-// Webpack (dev only)
-if (!isProd) {
-  const webpack = require("webpack");
-  const webpackDevMiddleware = require("webpack-dev-middleware");
-  const webpackHotMiddleware = require("webpack-hot-middleware");
-  const config = require("./webpack.config.js");
-  const compiler = webpack(config);
-  app.use(
-    webpackDevMiddleware(compiler, {
-      publicPath: config.output.publicPath,
-    })
-  );
-  app.use(webpackHotMiddleware(compiler));
-}
+// Webpack
+const webpack = require("webpack");
+const webpackDevMiddleware = require("webpack-dev-middleware");
+const webpackHotMiddleware = require("webpack-hot-middleware");
+const config = require("./webpack.config.js");
+const compiler = webpack(config);
+
+app.use(
+  webpackDevMiddleware(compiler, {
+    publicPath: config.output.publicPath,
+  })
+);
+
+app.use(webpackHotMiddleware(compiler));
 
 const cloneDeep = require("lodash.clonedeep");
 
@@ -333,10 +332,6 @@ app.use((req, res, next) => {
 
 // Whenever a user joins, all of this will occur. This is the socket configuration for multi-player setup
 io.on("connection", (socket) => {
-  // Client will join a per-game room for scoped broadcasts
-  socket.on("join-game", ({ gameId }) => {
-    if (gameId) socket.join(gameId);
-  });
   // Optional: map socket.id to player name for future rooming (not strictly needed now)
   socket.on("user-joined", (data) => {
     if (parties[data.partyId]) {
@@ -396,8 +391,7 @@ io.on("connection", (socket) => {
         for (const teamKey in game) {
           const team = game[teamKey];
           for (const playerKey in team) {
-            const uname = data.username || data.u;
-            if (team[playerKey]["name"] === uname) {
+            if (team[playerKey]["name"] === data.username) {
               const now = Date.now();
               const p = team[playerKey];
               // Initialize previous tracking
@@ -425,11 +419,10 @@ io.on("connection", (socket) => {
               p.x = reqX;
               p.y = reqY;
               // Persist last facing and animation (string key if possible)
-              p.flip = !!(data.flip ?? data.f);
+              p.flip = !!data.flip;
               p.animation =
                 (data.animation && data.animation.key) ||
                 data.animation ||
-                data.a ||
                 p.animation ||
                 "idle";
               p._lastMoveTs = now;
@@ -445,12 +438,7 @@ io.on("connection", (socket) => {
   });
   // When a player attacks, a message is sent to everyone else
   socket.on("attack", (data) => {
-    // expect data.gameId from client
-    if (data && data.gameId) {
-      socket.to(data.gameId).emit("attack", data);
-    } else {
-      socket.broadcast.emit("attack", data);
-    }
+    socket.broadcast.emit("attack", data);
   });
   // Removed projectile-update/destroy (deterministic client simulation now)
 
@@ -480,7 +468,7 @@ io.on("connection", (socket) => {
     }
     if (!targetPlayerObj) return;
     // Broadcast new health value
-    io.to(gameId).emit("health-update", {
+    io.emit("health-update", {
       username: target,
       health: targetPlayerObj.currentHealth,
       gameId,
@@ -492,12 +480,7 @@ io.on("connection", (socket) => {
       // Find position if tracked
       const deathX = targetPlayerObj.x || 0;
       const deathY = targetPlayerObj.y || 0;
-      io.to(gameId).emit("death", {
-        username: target,
-        gameId,
-        x: deathX,
-        y: deathY,
-      });
+      io.emit("death", { username: target, gameId, x: deathX, y: deathY });
 
       // Check if entire team is dead
       let allPlayersDead = true;
@@ -514,14 +497,10 @@ io.on("connection", (socket) => {
             parties[party][0]["gameStarted"] = false;
           }
         }
-        io.to(gameId).emit("game-over", { username: target, gameId, losers });
+        io.emit("game-over", { username: target, gameId, losers });
         // Ensure all losers have a final health-update of 0 (in case of any missed packet)
         losers.forEach((loser) => {
-          io.to(gameId).emit("health-update", {
-            username: loser,
-            health: 0,
-            gameId,
-          });
+          io.emit("health-update", { username: loser, health: 0, gameId });
         });
         delete games[gameId];
       }
@@ -539,7 +518,7 @@ io.on("connection", (socket) => {
             if (team[playerKey].dead !== true) {
               team[playerKey].currentHealth = 0;
               team[playerKey].dead = true;
-              io.to(data.gameId).emit("health-update", {
+              io.emit("health-update", {
                 username: data.username,
                 health: 0,
                 gameId: data.gameId,
@@ -783,7 +762,7 @@ setInterval(() => {
           };
         }
       }
-      io.to(gameId).emit("state", { gameId, t: now, players });
+      io.emit("state", { gameId, t: now, players });
     }
   } catch (e) {
     // swallow
