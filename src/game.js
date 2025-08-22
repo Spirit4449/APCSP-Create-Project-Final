@@ -426,8 +426,8 @@ class GameScene extends Phaser.Scene {
 
       // Only send movement update if enough time has passed AND something meaningful changed
       const positionChanged =
-        Math.abs(currentState.x - lastPlayerState.x) > 2 ||
-        Math.abs(currentState.y - lastPlayerState.y) > 2;
+        Math.abs(currentState.x - lastPlayerState.x) > 1 ||
+        Math.abs(currentState.y - lastPlayerState.y) > 1;
       const stateChanged =
         positionChanged ||
         currentState.flip !== lastPlayerState.flip ||
