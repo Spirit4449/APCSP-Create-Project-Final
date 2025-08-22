@@ -49,7 +49,7 @@ let gameEnded = false; // stops update loop network emissions after game over
 
 // Movement throttling variables
 let lastMovementSent = 0;
-const movementThrottleMs = 55; // Send movement updates every 75ms (about 13 FPS)
+const movementThrottleMs = 25; // Send movement updates every 100ms (about 10 FPS)
 let lastPlayerState = { x: 0, y: 0, flip: false, animation: null };
 
 // No remote projectile registry (deterministic simulation on each client)
@@ -235,7 +235,7 @@ class GameScene extends Phaser.Scene {
         const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
 
         // If the distance is too large (player teleported, respawned, etc.), don't tween
-        const maxTweenDistance = 200;
+        const maxTweenDistance = 300;
 
         if (distance > maxTweenDistance) {
           // Teleport immediately for large distances
@@ -247,13 +247,15 @@ class GameScene extends Phaser.Scene {
             opponentPlayer.movementTween.remove();
           }
 
-          // Create smooth movement tween
+          // Create smooth movement tween with overlap protection
+          const tweenDuration = Math.min(150, distance * 0.8); // Scale duration with distance, max 150ms
+          
           opponentPlayer.movementTween = this.tweens.add({
             targets: opponentPlayer.opponent,
             x: data.x,
             y: data.y,
-            duration: movementThrottleMs + 25, // Slightly longer than throttle interval for smooth overlap
-            ease: "Linear",
+            duration: tweenDuration,
+            ease: "Power2.easeOut", // Smoother easing function
             onUpdate: () => {
               // Update name tag position during tween
               opponentPlayer.opPlayerName.setPosition(
@@ -424,8 +426,8 @@ class GameScene extends Phaser.Scene {
 
       // Only send movement update if enough time has passed AND something meaningful changed
       const positionChanged =
-        Math.abs(currentState.x - lastPlayerState.x) > 1 ||
-        Math.abs(currentState.y - lastPlayerState.y) > 1;
+        Math.abs(currentState.x - lastPlayerState.x) > 2 ||
+        Math.abs(currentState.y - lastPlayerState.y) > 2;
       const stateChanged =
         positionChanged ||
         currentState.flip !== lastPlayerState.flip ||

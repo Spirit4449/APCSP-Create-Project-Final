@@ -52,10 +52,11 @@
 
 ### Configuration:
 
-- **Throttle Interval**: 75ms (adjustable via `movementThrottleMs`)
-- **Tween Duration**: 100ms (throttle + 25ms for smooth overlap)
-- **Max Tween Distance**: 200px (larger distances trigger immediate teleport)
-- **Position Sensitivity**: 1px minimum change required
+- **Throttle Interval**: 100ms (adjustable via `movementThrottleMs`)
+- **Tween Duration**: Adaptive 80-150ms based on distance moved
+- **Tween Easing**: Power2.easeOut for natural deceleration
+- **Max Tween Distance**: 300px (larger distances trigger immediate teleport)
+- **Position Sensitivity**: 2px minimum change required
 
 ## Results
 
