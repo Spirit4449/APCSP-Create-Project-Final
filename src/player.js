@@ -483,8 +483,8 @@ function calculateMangroveSpawn(position, spawnParam, player) {
 }
 
 export function handlePlayerMovement(scene) {
-  const speed = 250;
-  const jumpSpeed = 400;
+  const speed = 350;
+  const jumpSpeed = 420;
 
   // Keys. Player can use either arrow keys or WASD
   const leftKey =
@@ -629,7 +629,7 @@ export function handlePlayerMovement(scene) {
     const wallJumpTween = scene.tweens.add({
       // This tween smooths the kickback from the walljump
       targets: player,
-      x: player.x + (player.body.touching.left ? 50 : -50), // Moves the player -50 or 50 cords away depending on position
+      x: player.x + (player.body.touching.left ? 80 : -80), // Moves the player -50 or 50 cords away depending on position
       duration: 200,
       ease: "Linear",
       onComplete: function () {
