@@ -338,16 +338,12 @@ export function createPlayer(
           x: player.x,
           y: player.y,
           weapon: "shuriken",
-          scale: config.scale || 0.1,
           damage: config.damage,
           name: username,
           returning: true,
           direction,
-          // send timing params so remote can deterministically simulate
-          forwardDistance: config.forwardDistance,
-          outwardDuration: config.outwardDuration,
-          returnSpeed: config.returnSpeed,
-          rotationSpeed: config.rotationSpeed,
+          gameId,
+          // timing/visual params omitted (use defaults on receivers)
         });
         pdbg();
       }
