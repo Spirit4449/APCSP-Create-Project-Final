@@ -47,6 +47,11 @@ const opponentPlayers = [];
 const teamPlayers = [];
 let gameEnded = false; // stops update loop network emissions after game over
 
+// Movement throttling variables
+let lastMovementSent = 0;
+const movementThrottleMs = 55; // Send movement updates every 75ms (about 13 FPS)
+let lastPlayerState = { x: 0, y: 0, flip: false, animation: null };
+
 // No remote projectile registry (deterministic simulation on each client)
 
 // Phaser class to setup the game
@@ -160,6 +165,14 @@ class GameScene extends Phaser.Scene {
               map
             );
             teamPlayers[key] = userPlayer; // Adds player object to the list
+            // Initialize with current position if available
+            if (
+              data.userTeam[key]["x"] !== undefined &&
+              data.userTeam[key]["y"] !== undefined
+            ) {
+              userPlayer.opponent.x = data.userTeam[key]["x"];
+              userPlayer.opponent.y = data.userTeam[key]["y"];
+            }
             cdbg("opPlayer created (user team)", { key });
           }
         }
@@ -176,6 +189,14 @@ class GameScene extends Phaser.Scene {
               map
             );
             opponentPlayers[key] = opponentPlayer;
+            // Initialize with current position if available
+            if (
+              data.opTeam[key]["x"] !== undefined &&
+              data.opTeam[key]["y"] !== undefined
+            ) {
+              opponentPlayer.opponent.x = data.opTeam[key]["x"];
+              opponentPlayer.opponent.y = data.opTeam[key]["y"];
+            }
             cdbg("opPlayer created (op team)", { key });
           }
         }
@@ -204,19 +225,59 @@ class GameScene extends Phaser.Scene {
         opponentPlayers[data.username] || teamPlayers[data.username];
       // Finds player from the list
       if (opponentPlayer) {
-        // Sets the x and y of the opponent as well as the animaiton
+        // Store the previous position for smooth tweening
         const prevX = opponentPlayer.opponent.x;
-        opponentPlayer.opponent.x = data.x;
-        opponentPlayer.opponent.y = data.y;
+        const prevY = opponentPlayer.opponent.y;
+
+        // Calculate distance to determine if we should tween or teleport
+        const deltaX = Math.abs(data.x - prevX);
+        const deltaY = Math.abs(data.y - prevY);
+        const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+
+        // If the distance is too large (player teleported, respawned, etc.), don't tween
+        const maxTweenDistance = 200;
+
+        if (distance > maxTweenDistance) {
+          // Teleport immediately for large distances
+          opponentPlayer.opponent.x = data.x;
+          opponentPlayer.opponent.y = data.y;
+        } else {
+          // Stop any existing movement tween
+          if (opponentPlayer.movementTween) {
+            opponentPlayer.movementTween.remove();
+          }
+
+          // Create smooth movement tween
+          opponentPlayer.movementTween = this.tweens.add({
+            targets: opponentPlayer.opponent,
+            x: data.x,
+            y: data.y,
+            duration: movementThrottleMs + 25, // Slightly longer than throttle interval for smooth overlap
+            ease: "Linear",
+            onUpdate: () => {
+              // Update name tag position during tween
+              opponentPlayer.opPlayerName.setPosition(
+                opponentPlayer.opponent.x,
+                opponentPlayer.opponent.y - opponentPlayer.opponent.height + 10
+              );
+            },
+            onComplete: () => {
+              opponentPlayer.movementTween = null;
+            },
+          });
+        }
+
+        // Update flip and animation immediately (these don't need tweening)
         opponentPlayer.opponent.flipX = data.flip;
+        opponentPlayer.opponent.anims.play(data.animation, true);
+
+        // Update name tag position
         opponentPlayer.opPlayerName.setPosition(
           opponentPlayer.opponent.x,
           opponentPlayer.opponent.y - opponentPlayer.opponent.height + 10
         );
-        opponentPlayer.opponent.anims.play(data.animation, true);
 
         // Remote running dust (approximate: if moved horizontally enough)
-        const deltaX = Math.abs(opponentPlayer.opponent.x - prevX);
         if (deltaX > 3) {
           opponentPlayer._dustTimer = (opponentPlayer._dustTimer || 0) + 16; // approximate frame delta
           if (opponentPlayer._dustTimer >= 70) {
@@ -276,6 +337,12 @@ class GameScene extends Phaser.Scene {
         opponentPlayers[data.username] || teamPlayers[data.username];
 
       if (!opponentPlayer) return; // Safety guard
+
+      // Stop any active movement tween for the dying player
+      if (opponentPlayer.movementTween) {
+        opponentPlayer.movementTween.remove();
+        opponentPlayer.movementTween = null;
+      }
 
       if (data.username in opponentPlayers) {
         document.getElementById("your-team").textContent = `Your Team: ${
@@ -345,15 +412,38 @@ class GameScene extends Phaser.Scene {
     cdbg();
     if (!dead) {
       handlePlayerMovement(this); // Handles movement
-      socket.emit("move", {
-        // Emits x and y every update
-        x: player.x,
-        y: player.y,
+
+      // Throttle movement updates to reduce network traffic and improve smoothness
+      const now = Date.now();
+      const currentState = {
+        x: Math.round(player.x),
+        y: Math.round(player.y),
         flip: player.flipX,
-        animation: player.anims.currentAnim,
-        username,
-      });
-      cdbg();
+        animation: player.anims.currentAnim?.key || "idle",
+      };
+
+      // Only send movement update if enough time has passed AND something meaningful changed
+      const positionChanged =
+        Math.abs(currentState.x - lastPlayerState.x) > 1 ||
+        Math.abs(currentState.y - lastPlayerState.y) > 1;
+      const stateChanged =
+        positionChanged ||
+        currentState.flip !== lastPlayerState.flip ||
+        currentState.animation !== lastPlayerState.animation;
+
+      if (stateChanged && now - lastMovementSent >= movementThrottleMs) {
+        socket.emit("move", {
+          x: currentState.x,
+          y: currentState.y,
+          flip: currentState.flip,
+          animation: currentState.animation,
+          username,
+        });
+
+        lastMovementSent = now;
+        lastPlayerState = { ...currentState };
+        cdbg();
+      }
     }
     // Updates health bars
     for (const player in opponentPlayers) {

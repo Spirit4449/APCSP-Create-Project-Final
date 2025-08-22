@@ -27,6 +27,7 @@ export default class OpPlayer {
     this.opMaxHealth = 8000;
     this.opCurrentHealth = 8000;
     this.opHealthBarWidth = 60;
+    this.movementTween = null; // Store reference to current movement tween
     this.createOpPlayer();
   }
 
@@ -153,5 +154,25 @@ export default class OpPlayer {
       healthBarY - 8
     );
     this.opHealthText.setDepth(2);
+  }
+
+  // Clean up method to stop any active tweens and remove sprites
+  destroy() {
+    if (this.movementTween) {
+      this.movementTween.remove();
+      this.movementTween = null;
+    }
+    if (this.opponent) {
+      this.opponent.destroy();
+    }
+    if (this.opPlayerName) {
+      this.opPlayerName.destroy();
+    }
+    if (this.opHealthText) {
+      this.opHealthText.destroy();
+    }
+    if (this.opHealthBar) {
+      this.opHealthBar.destroy();
+    }
   }
 }
