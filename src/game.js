@@ -46,6 +46,11 @@ let mapObjects;
 const opponentPlayers = [];
 const teamPlayers = [];
 let gameEnded = false; // stops update loop network emissions after game over
+// Net sync helpers
+let netLastSend = 0;
+const netSendIntervalMs = 1000 / 20; // throttle client move emits to ~30Hz
+let stateActive = false; // once server 'state' snapshots start, prefer them over legacy 'move'
+let lastServerState = { t: 0, players: {} };
 
 // No remote projectile registry (deterministic simulation on each client)
 
@@ -197,9 +202,10 @@ class GameScene extends Phaser.Scene {
     // Prewarm small dust pool
     prewarmDust(this, 8);
 
-    // Code that runs when another player moves
+    // Code that runs when another player moves (legacy). Disabled when stateActive.
     socket.on("move", (data) => {
       cdbg();
+      if (stateActive) return; // prefer authoritative snapshots
       const opponentPlayer =
         opponentPlayers[data.username] || teamPlayers[data.username];
       // Finds player from the list
@@ -227,6 +233,14 @@ class GameScene extends Phaser.Scene {
           }
         }
       }
+    });
+
+    // Authoritative server snapshots (throttled ~20Hz)
+    socket.on("state", (payload) => {
+      // payload: { gameId, t, players: { [username]: {x,y,flip,animation} } }
+      if (payload.gameId !== gameId) return;
+      lastServerState = payload;
+      stateActive = true;
     });
 
     // When another player attacks, this catches it
@@ -345,15 +359,79 @@ class GameScene extends Phaser.Scene {
     cdbg();
     if (!dead) {
       handlePlayerMovement(this); // Handles movement
-      socket.emit("move", {
-        // Emits x and y every update
-        x: player.x,
-        y: player.y,
-        flip: player.flipX,
-        animation: player.anims.currentAnim,
-        username,
-      });
+      // Throttled move emit (client-side prediction, server reconciliation)
+      const now = performance.now();
+      if (now - netLastSend >= netSendIntervalMs) {
+        netLastSend = now;
+        socket.emit("move", {
+          x: player.x,
+          y: player.y,
+          flip: player.flipX,
+          animation: player.anims.currentAnim
+            ? player.anims.currentAnim.key
+            : "idle",
+          username,
+        });
+      }
       cdbg();
+    }
+    // Apply authoritative state smoothing to opponents and reconcile local player
+    if (stateActive && lastServerState && lastServerState.players) {
+      const playersMap = lastServerState.players;
+      const dt = this.game.loop.delta / 1000;
+      const lerp = (a, b, t) => a + (b - a) * t;
+      const smoothFactor = Phaser.Math.Clamp(dt * 12, 0, 1); // responsiveness vs. smoothness
+
+      // Reconcile local player (light correction to avoid jitter)
+      const myState = playersMap[username];
+      if (myState && !dead) {
+        const errX = myState.x - player.x;
+        const errY = myState.y - player.y;
+        const err = Math.hypot(errX, errY);
+        if (err > 60) {
+          // snap if way off
+          player.x = myState.x;
+          player.y = myState.y;
+        } else if (err > 6) {
+          // gently steer toward authoritative position
+          player.x = lerp(player.x, myState.x, smoothFactor * 0.6);
+          player.y = lerp(player.y, myState.y, smoothFactor * 0.6);
+        }
+      }
+
+      // Update opponents (both enemy and user team mirror)
+      const applyTo = (wrapper, name) => {
+        if (!wrapper) return;
+        const sprite = wrapper.opponent;
+        const s = playersMap[name];
+        if (!s) return;
+        const dx = s.x - sprite.x;
+        const dy = s.y - sprite.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist > 100) {
+          sprite.x = s.x;
+          sprite.y = s.y;
+        } else {
+          sprite.x = lerp(sprite.x, s.x, smoothFactor);
+          sprite.y = lerp(sprite.y, s.y, smoothFactor);
+        }
+        sprite.flipX = !!s.flip;
+        if (s.animation) {
+          sprite.anims.play(s.animation, true);
+        }
+        // Update name tag position
+        wrapper.opPlayerName.setPosition(
+          sprite.x,
+          sprite.y - sprite.height + 10
+        );
+      };
+
+      for (const name in opponentPlayers) {
+        applyTo(opponentPlayers[name], name);
+      }
+      for (const name in teamPlayers) {
+        applyTo(teamPlayers[name], name);
+      }
     }
     // Updates health bars
     for (const player in opponentPlayers) {
