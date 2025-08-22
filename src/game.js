@@ -52,6 +52,12 @@ let lastMovementSent = 0;
 const movementThrottleMs = 25; // Send movement updates every 100ms (about 10 FPS)
 let lastPlayerState = { x: 0, y: 0, flip: false, animation: null };
 
+// Server snapshot interpolation
+let stateActive = false; // set true once we start receiving server snapshots
+const stateBuffer = []; // queue of { t, players: { [username]: {x,y,flip,animation} } }
+const MAX_STATE_BUFFER = 60; // ~4 seconds at 15 Hz
+let interpDelayMs = 100; // render ~80-120ms in the past (default 100ms)
+
 // No remote projectile registry (deterministic simulation on each client)
 
 // Phaser class to setup the game
@@ -218,9 +224,10 @@ class GameScene extends Phaser.Scene {
     // Prewarm small dust pool
     prewarmDust(this, 8);
 
-    // Code that runs when another player moves
+    // Code that runs when another player moves (legacy fallback). Disabled when stateActive.
     socket.on("move", (data) => {
       cdbg();
+      if (stateActive) return; // prefer authoritative interpolation
       const opponentPlayer =
         opponentPlayers[data.username] || teamPlayers[data.username];
       // Finds player from the list
@@ -290,6 +297,15 @@ class GameScene extends Phaser.Scene {
           }
         }
       }
+    });
+
+    // Authoritative server snapshots (throttled from server)
+    socket.on("state", (payload) => {
+      if (payload.gameId !== gameId) return;
+      stateActive = true;
+      stateBuffer.push(payload);
+      // keep buffer bounded
+      if (stateBuffer.length > MAX_STATE_BUFFER) stateBuffer.shift();
     });
 
     // When another player attacks, this catches it
@@ -447,7 +463,84 @@ class GameScene extends Phaser.Scene {
         cdbg();
       }
     }
-    // Updates health bars
+
+    // Interpolate remote entities ~100ms in the past for smoothness
+    if (stateActive && stateBuffer.length >= 1) {
+      const newest = stateBuffer[stateBuffer.length - 1];
+      const targetT = newest.t - interpDelayMs;
+
+      // Find two snapshots surrounding targetT
+      let older = null;
+      let newer = null;
+      for (let i = stateBuffer.length - 1; i >= 0; i--) {
+        const s = stateBuffer[i];
+        if (s.t <= targetT) {
+          older = s;
+          newer = stateBuffer[i + 1] || s;
+          break;
+        }
+      }
+      if (!older) {
+        older = stateBuffer[0];
+        newer = stateBuffer[1] || older;
+      }
+
+      const t0 = older.t;
+      const t1 = Math.max(newer.t, t0 + 1);
+      const alpha = Phaser.Math.Clamp((targetT - t0) / (t1 - t0), 0, 1);
+      const lerp = (a, b, t) => a + (b - a) * t;
+
+      const applyInterp = (wrapper, name) => {
+        if (!wrapper) return;
+        const spr = wrapper.opponent;
+        // cancel any legacy tween to avoid fighting interpolation
+        if (wrapper.movementTween) {
+          wrapper.movementTween.remove();
+          wrapper.movementTween = null;
+        }
+        const s0 = older.players[name];
+        const s1 = newer.players[name] || s0;
+        if (!s0 && !s1) return;
+        const aState = s0 || s1;
+        const bState = s1 || s0;
+        if (!aState) return;
+        // Ignore obviously bogus states
+        if (
+          Number.isNaN(aState.x) ||
+          Number.isNaN(aState.y)
+        ) return;
+
+        const ix = lerp(aState.x, (bState?.x ?? aState.x), alpha);
+        const iy = lerp(aState.y, (bState?.y ?? aState.y), alpha);
+
+        // If huge teleport between frames, snap to destination
+        const dist = Math.hypot((bState?.x ?? aState.x) - aState.x, (bState?.y ?? aState.y) - aState.y);
+        if (dist > 260) {
+          spr.x = bState?.x ?? aState.x;
+          spr.y = bState?.y ?? aState.y;
+        } else {
+          spr.x = ix;
+          spr.y = iy;
+        }
+
+        // Orientation/animation: take from newer if present
+        const animSrc = (bState && bState.animation) ? bState : aState;
+        spr.flipX = !!animSrc.flip;
+        if (animSrc.animation) {
+          spr.anims.play(animSrc.animation, true);
+        }
+
+        // Name tag
+        wrapper.opPlayerName.setPosition(
+          spr.x,
+          spr.y - spr.height + 10
+        );
+      };
+
+      for (const name in opponentPlayers) applyInterp(opponentPlayers[name], name);
+      for (const name in teamPlayers) applyInterp(teamPlayers[name], name);
+    }
+  // Updates health bars
     for (const player in opponentPlayers) {
       const opponentPlayer = opponentPlayers[player];
       opponentPlayer.updateHealthBar();
