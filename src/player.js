@@ -17,6 +17,7 @@ import {
 } from "./Maps/mangroveMeadow";
 import { ninjaAnimations } from "./Animations/ninja";
 import ReturningShuriken from "./ReturningShuriken";
+import { spawnDust } from "./effects";
 // Globals
 let player;
 let cursors;
@@ -35,6 +36,14 @@ let dead = false;
 let healthBarWidth = 60;
 let healthBar;
 let healthText;
+// Ammo/Cooldown bar (client-side only)
+let ammoBar; // graphics
+let ammoBarBack; // background graphics
+let ammoBarWidth = 60;
+let ammoCooldownMs = 1200; // 2s
+let ammoElapsed = 0; // time since last shot (ms)
+let ammoReady = true;
+let ammoTween; // active tween reference for smooth fill
 
 let playerName;
 
@@ -55,6 +64,8 @@ let fireTrailTimer = 0;
 let fireTrailInterval = 45; // ms
 const firePool = [];
 const firePoolMax = 60;
+let dustTimer = 0;
+const dustInterval = 70; // ms between dust puffs when running
 function spawnFireFlame(scene, x, y) {
   // Reuse small graphics objects instead of creating rectangles each time
   let g = firePool.find((o) => !o.active);
@@ -210,6 +221,9 @@ export function createPlayer(
 
   // Health bar
   healthBar = scene.add.graphics();
+  // Ammo bar background & fill (render order: background, fill)
+  ammoBarBack = scene.add.graphics();
+  ammoBar = scene.add.graphics();
 
   // Triangle to show which one is the user. Dissapears when the player moves
   indicatorTriangle = scene.add.graphics();
@@ -228,13 +242,39 @@ export function createPlayer(
   // When the user taps, it shoots
   scene.input.on("pointerdown", function (pointer) {
     // If attack cooldown is finished
-    if (canAttack) {
+    if (ammoReady && canAttack) {
       isAttacking = true; // Sets variable for animation
       canAttack = false; // Sets attack cooldown variable
 
+      // Start cooldown (will instantly refill if projectile returns early)
+      ammoReady = false;
+      ammoElapsed = 0;
+      if (ammoTween) {
+        ammoTween.remove();
+        ammoTween = null;
+      }
+      // Tween that visually fills ammo bar over cooldown
+      const tweenProxy = { t: 0 };
+      ammoTween = scene.tweens.add({
+        targets: tweenProxy,
+        t: 1,
+        duration: ammoCooldownMs,
+        ease: "Linear",
+        onUpdate: () => {
+          ammoElapsed = tweenProxy.t * ammoCooldownMs;
+          drawAmmoBar();
+        },
+        onComplete: () => {
+          ammoElapsed = ammoCooldownMs;
+          ammoReady = true;
+          canAttack = true; // attack key gating
+          drawAmmoBar();
+        },
+      });
+
       setTimeout(() => {
         isAttacking = false;
-        canAttack = true;
+        // canAttack becomes true only when cooldown completes or projectile returns
       }, 300); // After 300 miliseconds, the user can attack again
 
       // Play the sound
@@ -268,6 +308,19 @@ export function createPlayer(
           player,
           config
         );
+        // Instant cooldown refill on return (early retrieval mechanic)
+        returning.onReturn = () => {
+          // Skip if already ready
+          if (ammoReady) return;
+          ammoElapsed = ammoCooldownMs;
+          ammoReady = true;
+          canAttack = true;
+          if (ammoTween) {
+            ammoTween.remove();
+            ammoTween = null;
+          }
+          drawAmmoBar();
+        };
 
         // Overlaps: enemies & map objects
         const enemyList = [];
@@ -320,7 +373,7 @@ function updateHealthBar() {
   const healthBarX = player.x - healthBarWidth / 2;
   let healthBarY;
   if (!dead) {
-    healthBarY = player.y - (player.height / 2 + 4);
+    healthBarY = player.y - (player.height / 2 + 8); // shift up slightly to make space for ammo bar
     healthText.setText(`${currentHealth}`);
   } else {
     healthBarY = player.y - (player.height / 2 - 24);
@@ -343,6 +396,51 @@ function updateHealthBar() {
 
   healthText.setPosition(player.x - healthText.width / 2, healthBarY - 8);
   healthText.setDepth(2);
+
+  // Draw ammo bar underneath health (only for local player & when alive)
+  drawAmmoBar(healthBarX, healthBarY + 11);
+}
+
+function drawAmmoBar(forcedX, forcedY) {
+  if (!ammoBar || !ammoBarBack) return;
+  const percent = Phaser.Math.Clamp(ammoElapsed / ammoCooldownMs, 0, 1);
+  const x = forcedX !== undefined ? forcedX : player.x - ammoBarWidth / 2;
+  const y =
+    forcedY !== undefined ? forcedY : player.y - (player.height / 2 + 8) + 11;
+  ammoBarBack.clear();
+  ammoBar.clear();
+  // Background
+  ammoBarBack.fillStyle(0x222222, 0.65);
+  ammoBarBack.fillRoundedRect(x, y, ammoBarWidth, 6, 3);
+  ammoBarBack.lineStyle(2, 0x000000, 0.9);
+  ammoBarBack.strokeRoundedRect(x, y, ammoBarWidth, 6, 3);
+  // Fill gradient simulation (two passes)
+  // Red color scheme (darker while charging, bright when ready)
+  const chargingColor = 0xb32121;
+  const readyColor = 0xff4040;
+  // Simple interpolate between dark->bright based on percent
+  const r1 = (chargingColor >> 16) & 0xff;
+  const g1 = (chargingColor >> 8) & 0xff;
+  const b1 = chargingColor & 0xff;
+  const r2 = (readyColor >> 16) & 0xff;
+  const g2 = (readyColor >> 8) & 0xff;
+  const b2 = readyColor & 0xff;
+  const r = Math.round(r1 + (r2 - r1) * percent);
+  const g = Math.round(g1 + (g2 - g1) * percent);
+  const b = Math.round(b1 + (b2 - b1) * percent);
+  const fillColor = (r << 16) | (g << 8) | b;
+  ammoBar.fillStyle(fillColor, 0.95);
+  ammoBar.fillRoundedRect(x, y, ammoBarWidth * percent, 6, 3);
+  // Small highlight overlay for polish
+  ammoBar.fillStyle(0xffffff, 0.25 * (percent < 1 ? 1 : 0.6));
+  ammoBar.fillRoundedRect(x, y, ammoBarWidth * percent, 2, {
+    tl: 3,
+    tr: 3,
+    bl: 0,
+    br: 0,
+  });
+  ammoBar.setDepth(2);
+  ammoBarBack.setDepth(1);
 }
 
 function calculateSpawn(platform, spawn, player) {
@@ -471,10 +569,12 @@ export function handlePlayerMovement(scene) {
 
   // Fire trail (simple particle substitute)
   fireTrailTimer += scene.game.loop.delta;
+  dustTimer += scene.game.loop.delta;
   if (
     !dead &&
     fireTrailTimer >= fireTrailInterval &&
-    (isMoving || !player.body.touching.down)
+    isMoving && // only when actually moving horizontally
+    !dead
   ) {
     fireTrailTimer = 0;
     const baseX = player.x - (player.flipX ? -14 : 14);
@@ -483,6 +583,27 @@ export function handlePlayerMovement(scene) {
     const count = Phaser.Math.Between(1, 2);
     for (let i = 0; i < count; i++) {
       spawnFireFlame(scene, baseX, baseY);
+    }
+  }
+
+  // Ground running dust (only while on ground & moving)
+  if (
+    !dead &&
+    isMoving &&
+    player.body.touching.down &&
+    dustTimer >= dustInterval
+  ) {
+    dustTimer = 0;
+    const dustY = player.y + player.height * 0.45; // near feet
+    const dustX = player.x + (player.flipX ? -18 : 18) * 0.3;
+    spawnDust(scene, dustX, dustY);
+    if (Math.random() < 0.3) {
+      // occasional extra puff for variability
+      spawnDust(
+        scene,
+        dustX + Phaser.Math.Between(-6, 6),
+        dustY + Phaser.Math.Between(-2, 2)
+      );
     }
   }
 

@@ -3,13 +3,7 @@
 import { base, platform } from "./Maps/lushyPeaks";
 import { calculateSpawn, calculateMangroveSpawn } from "./player";
 import socket from "./socket";
-function odbg(label, data = {}) {
-  try {
-    console.log(`[OPP][${new Date().toISOString()}] ${label}`, data);
-  } catch (e) {
-    console.log(`[OPP] ${label}`);
-  }
-}
+
 export default class OpPlayer {
   constructor(
     scene,
@@ -34,12 +28,6 @@ export default class OpPlayer {
     this.opCurrentHealth = 8000;
     this.opHealthBarWidth = 60;
     this.createOpPlayer();
-    odbg("construct", {
-      username: this.username,
-      team: this.team,
-      spawnPlatform: this.spawnPlatform,
-      spawn: this.spawn,
-    });
   }
 
   createOpPlayer() {
@@ -47,7 +35,6 @@ export default class OpPlayer {
     this.opponent = this.scene.physics.add.sprite(-100, -100, "sprite");
     this.opponent.body.allowGravity = false;
     this.opponent.anims.play("idle", true);
-    odbg("sprite created", { username: this.username });
 
     // Sets spawns
     if (this.spawnPlatform === "bottom") {
@@ -96,10 +83,6 @@ export default class OpPlayer {
 
     // Initially updates health bar
     this.updateHealthBar();
-    odbg("initial health bar", {
-      username: this.username,
-      hp: this.opCurrentHealth,
-    });
 
     // Listen for health updates for this opponent
     socket.on("health-update", (data) => {
@@ -112,10 +95,6 @@ export default class OpPlayer {
         } else {
           this.updateHealthBar();
         }
-        odbg("health-update recv", {
-          username: this.username,
-          hp: this.opCurrentHealth,
-        });
       }
     });
   }
@@ -125,10 +104,6 @@ export default class OpPlayer {
       // Prevents health from going negative
       this.opCurrentHealth = 0;
     }
-    odbg("updateHealthBar", {
-      username: this.username,
-      hp: this.opCurrentHealth,
-    });
     // Sets percentage of health
     const healthPercentage = this.opCurrentHealth / this.opMaxHealth;
     const displayedWidth = this.opHealthBarWidth * healthPercentage;

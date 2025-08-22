@@ -1,25 +1,14 @@
 // ReturningShuriken.js
-// Curved, returning, piercing shuriken with local deterministic simulation.
+// Curved, returning, piercing shuriken with deterministic local simulation.
 
 import socket from "./socket"; // owner-only hit events
 
 export default class ReturningShuriken extends Phaser.Physics.Arcade.Image {
   /**
    * @param {Phaser.Scene} scene
-   * @param {Phaser.Types.Math.Vector2Like} startPos
-   * @param {Phaser.Physics.Arcade.Sprite} ownerSprite - The sprite that launched this shuriken (local or remote copy).
+   * @param {{x:number,y:number}} startPos
+   * @param {Phaser.Physics.Arcade.Sprite} ownerSprite
    * @param {Object} config
-   *  direction: 1 or -1 (facing)
-   *  forwardDistance: distance of outward phase
-   *  arcHeight: vertical lift (positive number -> goes upward)
-   *  outwardDuration: ms duration for outward arc
-   *  returnSpeed: pixels per second when returning
-   *  rotationSpeed: degrees per second
-   *  scale: sprite scale
-   *  damage: damage per hit
-   *  username: attacker's username (needed for socket.hit)
-   *  gameId: current game id
-   *  isOwner: boolean, only owner emits hit events
    */
   constructor(scene, startPos, ownerSprite, config) {
     super(scene, startPos.x, startPos.y, "shuriken");
@@ -28,9 +17,9 @@ export default class ReturningShuriken extends Phaser.Physics.Arcade.Image {
       {
         direction: 1,
         forwardDistance: 520,
-        outwardDuration: 600,
-        returnSpeed: 780,
-        rotationSpeed: 950,
+        outwardDuration: 600, // ms
+        returnSpeed: 580, // px/s (cap)
+        rotationSpeed: 950, // deg/s
         scale: 0.1,
         damage: 1000,
         username: "",
@@ -41,22 +30,21 @@ export default class ReturningShuriken extends Phaser.Physics.Arcade.Image {
       },
       config || {}
     );
-    this.phase = "outward";
+
+    // Phase state
+    this.phase = "outward"; // outward -> hover -> return
     this.elapsed = 0; // ms in current phase
     this.totalElapsed = 0; // ms total life
-    this.hitTimestamps = {}; // targetUsername -> lastHitMs (scene.time.now)
-    this.hoverDuration = 200; // ms spin in place
-    this.returnAcceleration = 1100; // px/s^2 accelerate toward owner
-    this.currentReturnSpeed = this.cfg.returnSpeed * 0.25; // start slower
-    // Removed map collision destruction logic; shuriken now ignores blocks entirely
+    this.hoverDuration = 100; // ms to hover before returning
+    this.returnAcceleration = 800; // px/s^2
+    this.currentReturnSpeed = this.cfg.returnSpeed * 0.08; // ramp up
+    this.hitTimestamps = {}; // username -> last hit ms
 
-    // Manual trail settings
-    this.trailInterval = 55; // ms between trail puffs
+    // Trail state
+    this.trailInterval = 30; // ms
     this.trailAccum = 0;
     this.trails = [];
     this.maxTrails = 40;
-    // (previousY tracking removed since map collisions are ignored)
-    // (No network position syncing; each client simulates deterministically.)
 
     // Add to scene / physics
     scene.add.existing(this);
@@ -65,26 +53,58 @@ export default class ReturningShuriken extends Phaser.Physics.Arcade.Image {
     this.body.allowGravity = false;
     this.setDepth(5);
     this.setAngularVelocity(this.cfg.rotationSpeed * this.cfg.direction);
-    // spawn logging removed
 
-    // Path control points for slight bulge (down a bit then up higher then settle)
+    // Path control points (slight dip then bulge)
     this.startX = startPos.x;
     this.startY = startPos.y;
     this.endX = this.startX + this.cfg.direction * this.cfg.forwardDistance;
-    this.endY = this.startY; // finish roughly same height
-    const dipDown = 18; // downward sag early
-    const bulgeUp = 65; // upward peak
+    this.endY = this.startY;
+    const dipDown = 20;
+    const bulgeUp = 40;
     this.ctrl1X =
-      this.startX + this.cfg.direction * this.cfg.forwardDistance * 0.25; // early
-    this.ctrl1Y = this.startY + dipDown; // dip
+      this.startX + this.cfg.direction * this.cfg.forwardDistance * 0.25;
+    this.ctrl1Y = this.startY + dipDown;
     this.ctrl2X =
-      this.startX + this.cfg.direction * this.cfg.forwardDistance * 0.6; // mid-late
-    this.ctrl2Y = this.startY - bulgeUp; // bulge apex
+      this.startX + this.cfg.direction * this.cfg.forwardDistance * 0.6;
+    this.ctrl2Y = this.startY - bulgeUp;
+
+    // Unified subtle glow (blue if owner, red otherwise)
+    const glowColor = this.cfg.isOwner ? 0x2e9bff : 0xff3a2e;
+    this.glow = scene.add.graphics();
+    this.glow.setDepth(this.depth - 1);
+    this.glow.setBlendMode(Phaser.BlendModes.ADD);
+    this._drawGlow(glowColor);
+    scene.tweens.add({
+      targets: this.glow,
+      scale: { from: 0.95, to: 1.15 },
+      alpha: { from: 0.9, to: 0.55 },
+      duration: 600,
+      repeat: -1,
+      yoyo: true,
+      ease: "Sine.easeInOut",
+    });
 
     this.scene.events.on("update", this.updateShuriken, this);
   }
 
-  // Cubic Bezier interpolation
+  _drawGlow(colorInt) {
+    const baseRadius = 85 * this.cfg.scale;
+    const innerRadius = baseRadius * 0.42;
+    const midRadius = baseRadius * 0.9;
+    const outerRadius = baseRadius * 1.2;
+    const c = Phaser.Display.Color.IntegerToColor(colorInt);
+    this.glow.clear();
+    this.glow.x = this.x;
+    this.glow.y = this.y;
+    this.glow.fillStyle(c.color, 0.42);
+    this.glow.fillCircle(0, 0, outerRadius);
+    this.glow.fillStyle(c.color, 0.72);
+    this.glow.fillCircle(0, 0, midRadius);
+    this.glow.fillStyle(c.color, 0.95);
+    this.glow.fillCircle(0, 0, innerRadius);
+  }
+
+  // Cubic Bezier interpolation helper
   cubic(t, p0, p1, p2, p3) {
     const it = 1 - t;
     return (
@@ -96,10 +116,8 @@ export default class ReturningShuriken extends Phaser.Physics.Arcade.Image {
   }
 
   tryDamage(targetWrapper) {
-    if (!this.cfg.isOwner) return; // only owner client reports hits
+    if (!this.cfg.isOwner) return; // only owner reports hits
     if (!targetWrapper) return;
-    const targetSprite = targetWrapper.opponent || targetWrapper; // wrapper for OpPlayer vs local player sprite
-    // Determine target username
     const targetUsername =
       targetWrapper.username ||
       targetWrapper._username ||
@@ -107,7 +125,7 @@ export default class ReturningShuriken extends Phaser.Physics.Arcade.Image {
       "unknown";
     const now = this.scene.time.now;
     const last = this.hitTimestamps[targetUsername] || 0;
-    if (now - last < this.cfg.hitCooldown) return; // rate limit
+    if (now - last < this.cfg.hitCooldown) return;
     this.hitTimestamps[targetUsername] = now;
     socket.emit("hit", {
       attacker: this.cfg.username,
@@ -122,20 +140,16 @@ export default class ReturningShuriken extends Phaser.Physics.Arcade.Image {
       if (!obj) return;
       const sprite = obj.opponent || obj;
       this.scene.physics.add.overlap(this, sprite, () => {
-        if (obj.opponent) {
-          this.tryDamage(obj);
-        }
+        if (obj.opponent) this.tryDamage(obj);
       });
     });
   }
 
-  // Separate helper for map-only array (semantic clarity)
-  attachMapOverlap(mapObjects) {
-    // Intentionally left blank: shuriken ignores map collisions now
+  attachMapOverlap() {
+    // Intentionally blank (projectile ignores map now)
   }
 
   spawnTrail() {
-    // Simple tiny fading sprite using existing texture
     const s = this.scene.add.image(this.x, this.y, "shuriken");
     s.setScale(this.cfg.scale * 0.4);
     s.setDepth(4);
@@ -158,9 +172,9 @@ export default class ReturningShuriken extends Phaser.Physics.Arcade.Image {
   destroyShuriken() {
     if (!this.scene) return;
     this.scene.events.off("update", this.updateShuriken, this);
-    // Clean any remaining trail sprites
     this.trails.forEach((t) => t && t.destroy && t.destroy());
     this.trails.length = 0;
+    if (this.glow && this.glow.destroy) this.glow.destroy();
     this.destroy();
   }
 
@@ -179,14 +193,12 @@ export default class ReturningShuriken extends Phaser.Physics.Arcade.Image {
     }
 
     if (this.phase === "outward") {
-      // Ease: slower start and end (easeInOut) -> t' = (1 - cos(pi*t))/2
       const rawT = Phaser.Math.Clamp(
         this.elapsed / this.cfg.outwardDuration,
         0,
         1
       );
-      // Ease in-out cubic style for smoother bulge traversal
-      const t = (1 - Math.cos(Math.PI * rawT)) / 2;
+      const t = (1 - Math.cos(Math.PI * rawT)) / 2; // ease in-out
       const nx = this.cubic(
         t,
         this.startX,
@@ -205,7 +217,6 @@ export default class ReturningShuriken extends Phaser.Physics.Arcade.Image {
       if (rawT >= 1) {
         this.phase = "hover";
         this.elapsed = 0;
-        // Slow rotation a bit while hovering
         this.setAngularVelocity(
           this.cfg.rotationSpeed * 0.55 * this.cfg.direction
         );
@@ -214,13 +225,11 @@ export default class ReturningShuriken extends Phaser.Physics.Arcade.Image {
       if (this.elapsed >= this.hoverDuration) {
         this.phase = "return";
         this.elapsed = 0;
-        // Speed up spin again for return
         this.setAngularVelocity(
           this.cfg.rotationSpeed * 1.15 * this.cfg.direction
         );
       }
     } else if (this.phase === "return") {
-      // Straight line return (no curve) with gentle acceleration
       if (!this.ownerSprite || !this.ownerSprite.active) {
         this.x +=
           this.cfg.direction * (this.currentReturnSpeed * (delta / 1000));
@@ -238,13 +247,27 @@ export default class ReturningShuriken extends Phaser.Physics.Arcade.Image {
           this.y + (dy / dist) * spd
         );
         if (dist < 30) {
-          // Reached owner
+          if (
+            this.cfg.isOwner &&
+            this.onReturn &&
+            typeof this.onReturn === "function"
+          ) {
+            try {
+              this.onReturn();
+            } catch (e) {
+              /* silent */
+            }
+          }
           this.destroyShuriken();
           return;
         }
       }
     }
 
-    // No network position emission (predictive model)
+    // Update glow position
+    if (this.glow) {
+      this.glow.x = this.x;
+      this.glow.y = this.y;
+    }
   }
 }

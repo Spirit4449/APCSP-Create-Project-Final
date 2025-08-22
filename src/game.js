@@ -17,6 +17,7 @@ import { createPlayer, player, handlePlayerMovement, dead } from "./player";
 import ReturningShuriken from "./ReturningShuriken";
 import socket from "./socket";
 import OpPlayer from "./opPlayer";
+import { spawnDust, prewarmDust } from "./effects";
 
 // Socket now imported from standalone module to prevent circular deps
 function cdbg() {
@@ -193,6 +194,9 @@ class GameScene extends Phaser.Scene {
       });
     }, 1000);
 
+    // Prewarm small dust pool
+    prewarmDust(this, 8);
+
     // Code that runs when another player moves
     socket.on("move", (data) => {
       cdbg();
@@ -201,6 +205,7 @@ class GameScene extends Phaser.Scene {
       // Finds player from the list
       if (opponentPlayer) {
         // Sets the x and y of the opponent as well as the animaiton
+        const prevX = opponentPlayer.opponent.x;
         opponentPlayer.opponent.x = data.x;
         opponentPlayer.opponent.y = data.y;
         opponentPlayer.opponent.flipX = data.flip;
@@ -209,6 +214,18 @@ class GameScene extends Phaser.Scene {
           opponentPlayer.opponent.y - opponentPlayer.opponent.height + 10
         );
         opponentPlayer.opponent.anims.play(data.animation, true);
+
+        // Remote running dust (approximate: if moved horizontally enough)
+        const deltaX = Math.abs(opponentPlayer.opponent.x - prevX);
+        if (deltaX > 3) {
+          opponentPlayer._dustTimer = (opponentPlayer._dustTimer || 0) + 16; // approximate frame delta
+          if (opponentPlayer._dustTimer >= 70) {
+            opponentPlayer._dustTimer = 0;
+            const dY =
+              opponentPlayer.opponent.y + opponentPlayer.opponent.height * 0.45;
+            spawnDust(this, opponentPlayer.opponent.x, dY);
+          }
+        }
       }
     });
 
