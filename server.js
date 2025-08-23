@@ -221,17 +221,6 @@ app.get("/matchmaking/:partyid", (req, res) => {
           parties[party1][0]["gameStarted"] = true;
           parties[party2][0]["gameStarted"] = true;
 
-          // If there is an unbalance of players, it will be evened out
-          while (party1.length !== party2.length) {
-            if (party1.length < party2.length) {
-              // Add one player from party2 to party1
-              party1.push(party2.pop());
-            } else {
-              // Add one player from party1 to party2
-              party2.push(party1.pop());
-            }
-          }
-
           // Clone the dictionaries
           const party1Dict = clonePlayers(party1);
           const party2Dict = clonePlayers(party2);
@@ -259,6 +248,35 @@ app.get("/matchmaking/:partyid", (req, res) => {
           }
 
           const map = parties[partyId][0]["map"];
+          // Broadcast In Battle status to both parties' lobbies
+          try {
+            const p1Arr = parties[party1];
+            const p2Arr = parties[party2];
+            if (Array.isArray(p1Arr)) {
+              const statuses = [];
+              for (let i = 1; i < p1Arr.length; i++) {
+                const m = p1Arr[i];
+                if (m && m.name) {
+                  m.status = "In Battle";
+                  statuses.push({ name: m.name, status: m.status });
+                }
+              }
+              io.emit("status-bulk", { partyId: party1, statuses });
+            }
+            if (Array.isArray(p2Arr)) {
+              const statuses = [];
+              for (let i = 1; i < p2Arr.length; i++) {
+                const m = p2Arr[i];
+                if (m && m.name) {
+                  m.status = "In Battle";
+                  statuses.push({ name: m.name, status: m.status });
+                }
+              }
+              io.emit("status-bulk", { partyId: party2, statuses });
+            }
+          } catch (e) {
+            // swallow
+          }
           // After 1 second, game-started will be emit. This is to give time for the players, to enter the matchmaking screen.
           setTimeout(() => {
             io.emit("game-started", {
@@ -333,49 +351,56 @@ app.use((req, res, next) => {
 // Whenever a user joins, all of this will occur. This is the socket configuration for multi-player setup
 io.on("connection", (socket) => {
   socket.on("user-joined", (data) => {
-    if (parties[data.partyId]) {
-      for (const person in parties[data.partyId]) {
-        if (parties[data.partyId][person]["name"]) {
-          if (parties[data.partyId][person]["name"] === data.name) {
-            // If the person is found in the party already, there is no need to add them again. In this case the function will return
-            if (parties[data.partyId][person]["ready"] === true) {
-              // If the person was ready, it will be set to fasel
-              parties[data.partyId][person]["ready"] = false;
-              parties[data.partyId][person]["socketId"] = socket.id;
-              parties[data.partyId][0]["matchmaking"] = false;
-              parties[data.partyId][0]["gameStarted"] = false;
+    const party = parties[data.partyId];
+    if (!party) {
+      socket.emit("room-deleted");
+      return;
+    }
 
-              io.emit("matchmaking-disconnect", { partyId: data.partyId }); // Emits matchmaking disconnect if the player disconnected with matchmaking
-              // Emits connection for the user
-              socket.emit("connection", {
-                partyMembers: parties[data.partyId],
-              });
-            } else {
-              socket.emit("room-deleted"); // Takes the user back to the home screen
-            }
-            return;
-          }
-        }
+    // Try to find existing member by name
+    let foundIndex = -1;
+    for (let i = 0; i < party.length; i++) {
+      const m = party[i];
+      if (m && m.name === data.name) {
+        foundIndex = i;
+        break;
       }
-      // Pushes the user into the party with the default values
-      parties[data.partyId].push({
-        socketId: socket.id,
-        name: data.name,
-        character: "Ninja",
-        ready: false,
-        dead: false,
-        team: "",
-      });
-      // Emits connection just for that user
-      socket.emit("connection", { partyMembers: parties[data.partyId] });
-      // Emits connection for everyone but that user
+    }
+
+    if (foundIndex !== -1) {
+      // Update socketId and normalize state; allow reconnect regardless of ready flag
+      party[foundIndex].socketId = socket.id;
+      party[foundIndex].ready = false; // back to lobby by default
+      party[foundIndex].dead = false;
+      // Ensure party-level flags reflect lobby state
+      party[0]["matchmaking"] = false;
+      party[0]["gameStarted"] = false;
+      // Notify matchmaking UI to stop if needed
+      io.emit("matchmaking-disconnect", { partyId: data.partyId });
+      // Send current party roster to this client
+      socket.emit("connection", { partyMembers: party });
+      // Inform others that this user reconnected
       socket.broadcast.emit("user-joined", {
         name: data.name,
         partyId: data.partyId,
       });
-    } else {
-      socket.emit("room-deleted");
+      return;
     }
+
+    // Not found: add a new member
+    party.push({
+      socketId: socket.id,
+      name: data.name,
+      character: "Ninja",
+      ready: false,
+      dead: false,
+      team: "",
+    });
+    socket.emit("connection", { partyMembers: party });
+    socket.broadcast.emit("user-joined", {
+      name: data.name,
+      partyId: data.partyId,
+    });
   });
   // When a player joins, a message is sent to everyone else
   socket.on("player-joined", (data) => {
@@ -458,9 +483,32 @@ io.on("connection", (socket) => {
       }
       if (allPlayersDead && games[gameId]) {
         const gameParties = Object.keys(games[gameId]);
-        for (const party of gameParties) {
-          if (parties[party]) {
-            parties[party][0]["gameStarted"] = false;
+        for (const pId of gameParties) {
+          const partyArr = parties[pId];
+          if (partyArr) {
+            // Reset party-level flags
+            partyArr[0]["gameStarted"] = false;
+            partyArr[0]["matchmaking"] = false;
+            // Normalize all members back to lobby state and set status
+            const statuses = [];
+            for (let i = 1; i < partyArr.length; i++) {
+              if (partyArr[i]) {
+                partyArr[i].ready = false;
+                partyArr[i].dead = false;
+                partyArr[i].status = "End Screen (Game Over)";
+                statuses.push({
+                  name: partyArr[i].name,
+                  status: partyArr[i].status,
+                });
+                // Also emit explicit ready reset so UIs update
+                io.emit("ready", {
+                  name: partyArr[i].name,
+                  ready: false,
+                  party: pId,
+                });
+              }
+            }
+            io.emit("status-bulk", { partyId: pId, statuses });
           }
         }
         io.emit("game-over", { username: target, gameId, losers });
@@ -643,6 +691,21 @@ io.on("connection", (socket) => {
           }
 
           const map = parties[data.partyId][0]["map"];
+          // Broadcast In Battle status for direct start
+          try {
+            const pArr = parties[data.partyId];
+            if (Array.isArray(pArr)) {
+              const statuses = [];
+              for (let i = 1; i < pArr.length; i++) {
+                const m = pArr[i];
+                if (m && m.name) {
+                  m.status = "In Battle";
+                  statuses.push({ name: m.name, status: m.status });
+                }
+              }
+              io.emit("status-bulk", { partyId: data.partyId, statuses });
+            }
+          } catch (e) {}
           // Emits game started
           io.emit("game-started", {
             partyId: data.partyId,

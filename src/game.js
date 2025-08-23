@@ -58,6 +58,7 @@ const stateBuffer = []; // queue of { t, players: { [username]: {x,y,flip,animat
 const MAX_STATE_BUFFER = 60; // ~4 seconds at 15 Hz
 let interpDelayMs = 100; // render ~80-120ms in the past (default 100ms)
 
+
 // No remote projectile registry (deterministic simulation on each client)
 
 // Phaser class to setup the game
@@ -256,7 +257,7 @@ class GameScene extends Phaser.Scene {
 
           // Create smooth movement tween with overlap protection
           const tweenDuration = Math.min(150, distance * 0.8); // Scale duration with distance, max 150ms
-          
+
           opponentPlayer.movementTween = this.tweens.add({
             targets: opponentPlayer.opponent,
             x: data.x,
@@ -298,6 +299,8 @@ class GameScene extends Phaser.Scene {
         }
       }
     });
+
+
 
     // Authoritative server snapshots (throttled from server)
     socket.on("state", (payload) => {
@@ -505,16 +508,16 @@ class GameScene extends Phaser.Scene {
         const bState = s1 || s0;
         if (!aState) return;
         // Ignore obviously bogus states
-        if (
-          Number.isNaN(aState.x) ||
-          Number.isNaN(aState.y)
-        ) return;
+        if (Number.isNaN(aState.x) || Number.isNaN(aState.y)) return;
 
-        const ix = lerp(aState.x, (bState?.x ?? aState.x), alpha);
-        const iy = lerp(aState.y, (bState?.y ?? aState.y), alpha);
+        const ix = lerp(aState.x, bState?.x ?? aState.x, alpha);
+        const iy = lerp(aState.y, bState?.y ?? aState.y, alpha);
 
         // If huge teleport between frames, snap to destination
-        const dist = Math.hypot((bState?.x ?? aState.x) - aState.x, (bState?.y ?? aState.y) - aState.y);
+        const dist = Math.hypot(
+          (bState?.x ?? aState.x) - aState.x,
+          (bState?.y ?? aState.y) - aState.y
+        );
         if (dist > 260) {
           spr.x = bState?.x ?? aState.x;
           spr.y = bState?.y ?? aState.y;
@@ -524,23 +527,21 @@ class GameScene extends Phaser.Scene {
         }
 
         // Orientation/animation: take from newer if present
-        const animSrc = (bState && bState.animation) ? bState : aState;
+        const animSrc = bState && bState.animation ? bState : aState;
         spr.flipX = !!animSrc.flip;
         if (animSrc.animation) {
           spr.anims.play(animSrc.animation, true);
         }
 
         // Name tag
-        wrapper.opPlayerName.setPosition(
-          spr.x,
-          spr.y - spr.height + 10
-        );
+        wrapper.opPlayerName.setPosition(spr.x, spr.y - spr.height + 10);
       };
 
-      for (const name in opponentPlayers) applyInterp(opponentPlayers[name], name);
+      for (const name in opponentPlayers)
+        applyInterp(opponentPlayers[name], name);
       for (const name in teamPlayers) applyInterp(teamPlayers[name], name);
     }
-  // Updates health bars
+    // Updates health bars
     for (const player in opponentPlayers) {
       const opponentPlayer = opponentPlayers[player];
       opponentPlayer.updateHealthBar();

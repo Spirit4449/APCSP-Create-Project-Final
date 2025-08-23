@@ -392,10 +392,15 @@ function updateCharacterSlot(slot, name, character, status, isRandom = false) {
     sprite.className = "character-sprite";
 
     // Update status styling
-    statusEl.textContent = status;
-    if (status === "Ready") {
+    const display = status || "Not Ready";
+    statusEl.textContent = display;
+    if (display === "Ready") {
       statusEl.className = "status ready";
-    } else if (status === "Not Ready" || status === "Not ready") {
+    } else if (display === "Not Ready" || display === "Not ready") {
+      statusEl.className = "status not-ready";
+    } else if (display === "In Battle") {
+      statusEl.className = "status ready"; // green to indicate active
+    } else if (display === "End Screen (Game Over)") {
       statusEl.className = "status not-ready";
     }
 
@@ -550,12 +555,12 @@ socket.on("connection", (data) => {
       if (member.name === username) {
         tempName += " (You)";
       }
-      let readyText;
-      if (member.ready === true) {
-        readyText = "Ready";
-      } else if (member.ready === false) {
-        readyText = "Not ready";
-      }
+      // Prefer status field if present; fallback to ready flag
+      let readyText = member.status
+        ? member.status
+        : member.ready === true
+        ? "Ready"
+        : "Not ready";
       checkModeValue(); // Checks the value of the mode and sets up the td's
       updatePeople(tempName, character, readyText); // Updates the players
     }
@@ -566,6 +571,30 @@ socket.on("user-joined", (data) => {
   if (partyId === data.partyId) {
     updatePeople(data.name, "Ninja", "Not Ready");
     ptydbg("recv user-joined", data);
+  }
+});
+
+// Bulk status updates from server (e.g., In Battle or End Screen)
+socket.on("status-bulk", (data) => {
+  if (data && data.partyId === partyId && Array.isArray(data.statuses)) {
+    data.statuses.forEach(({ name, status }) => {
+      const slot = document.getElementById(name);
+      if (slot) {
+        const statusEl = slot.querySelector(".status");
+        if (statusEl) {
+          statusEl.textContent = status;
+          if (status === "Ready") {
+            statusEl.className = "status ready";
+          } else if (status === "Not Ready" || status === "Not ready") {
+            statusEl.className = "status not-ready";
+          } else if (status === "In Battle") {
+            statusEl.className = "status ready";
+          } else if (status === "End Screen (Game Over)") {
+            statusEl.className = "status not-ready";
+          }
+        }
+      }
+    });
   }
 });
 
