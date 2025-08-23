@@ -1,20 +1,9 @@
 // game.js
 
-// Image Credits
-// Shuriken Image: https://zh-partners.com/apps-sticker-banner-poster-printing-usage-and-part-of-logo-4809514.html
-// Fight Image: https://pngtree.com/freepng/boxing-gloves-vector-red-and-blue-boxing-gloves-that-are-fighting-isolate-on-white-background_5295441.html
-// Tileset: https://gamefromscratch.com/defold-engine-tutorial-series-tilemaps/
-// Ninja Spritesheet: https://www.freepik.com/premium-vector/black-ninja-game-sprites_1582425.htm
-// Background Image: https://de.dreamstime.com/berg-forest-video-game-background-image105360475
-// Random Image: https://www.svgrepo.com/svg/391659/random
-// VS Image: https://www.google.com/url?sa=i&url=https%3A%2F%2Fstock.adobe.com%2Fsearch%3Fk%3Dvs%2Blogo&psig=AOvVaw0qNTeqExfIsPsa9TyLB34Z&ust=1713801745452000&source=images&cd=vfe&opi=89978449&ved=0CBIQjRxqFwoTCOCJv5PX04UDFQAAAAAdAAAAABAE
-
-// Credits to https://www.w3schools.com/js/js_cookies.asp for helping with cookie code
-
 import { lushyPeaks, lushyPeaksObjects } from "./Maps/lushyPeaks";
 import { mangroveMeadow, mangroveMeadowObjects } from "./Maps/mangroveMeadow";
 import { createPlayer, player, handlePlayerMovement, dead } from "./player";
-import ReturningShuriken from "./ReturningShuriken";
+import { preloadAll, handleRemoteAttack, setupAll } from "./characters";
 import socket from "./socket";
 import OpPlayer from "./opPlayer";
 import { spawnDust, prewarmDust } from "./effects";
@@ -58,7 +47,6 @@ const stateBuffer = []; // queue of { t, players: { [username]: {x,y,flip,animat
 const MAX_STATE_BUFFER = 60; // ~4 seconds at 15 Hz
 let interpDelayMs = 100; // render ~80-120ms in the past (default 100ms)
 
-
 // No remote projectile registry (deterministic simulation on each client)
 
 // Phaser class to setup the game
@@ -66,16 +54,10 @@ class GameScene extends Phaser.Scene {
   // Preloads assets
   preload() {
     cdbg();
-    this.load.image("background", `${staticPath}/background.png`);
-    this.load.image(
-      "mangrove-background",
-      `${staticPath}/mangroveBackground.jpg`
-    );
-    this.load.atlas(
-      "sprite",
-      `${staticPath}/Ninja_Spritesheet.png`,
-      `${staticPath}/animations.json`
-    );
+    this.load.image("lushy-bg", `${staticPath}/Lushy/gameBg.png`);
+    this.load.image("mangrove-bg", `${staticPath}/Mangrove/gameBg.png`);
+    // Character assets (preload all registered characters)
+    preloadAll(this, staticPath);
 
     this.load.atlas(
       "troll",
@@ -84,20 +66,17 @@ class GameScene extends Phaser.Scene {
     );
     this.load.image("tiles-image", `${staticPath}/map.png`);
     this.load.tilemapTiledJSON("tiles", `${staticPath}/tilesheet.json`);
-    this.load.image("base", `${staticPath}/base.png`);
-    this.load.image("platform", `${staticPath}/largePlatform.png`);
-    this.load.image("side-platform", `${staticPath}/sidePlatform.png`);
-    this.load.image("medium-platform", `${staticPath}/mediumPlatform.png`);
-    this.load.image("tiny-platform", `${staticPath}/tinyPlatform.png`);
-    this.load.image("base-left", `${staticPath}/baseLeft.png`);
-    this.load.image("base-middle", `${staticPath}/baseMiddle.png`);
-    this.load.image("base-right", `${staticPath}/baseRight.png`);
-    this.load.image("base-top", `${staticPath}/baseTop.png`);
+    this.load.image("lushy-base", `${staticPath}/Lushy/base.png`);
+    this.load.image("lushy-platform", `${staticPath}/Lushy/largePlatform.png`);
+    this.load.image("lushy-side-platform", `${staticPath}/Lushy/sidePlatform.png`);
+    // this.load.image("lushy-medium-platform", `${staticPath}/Lushy/mediumPlatform.png`);
+    this.load.image("mangrove-tiny-platform", `${staticPath}/Mangrove/tinyPlatform.png`);
+    this.load.image("mangrove-base-left", `${staticPath}/Mangrove/baseLeft.png`);
+    this.load.image("mangrove-base-middle", `${staticPath}/Mangrove/baseMiddle.png`);
+    this.load.image("mangrove-base-right", `${staticPath}/Mangrove/baseRight.png`);
+    this.load.image("mangrove-base-top", `${staticPath}/Mangrove/baseTop.png`);
 
-    this.load.image("shuriken", `${staticPath}/shuriken.png`);
-    this.load.audio("shurikenThrow", `${staticPath}/shurikenThrow.mp3`);
-    this.load.audio("shurikenHit", `${staticPath}/hit.mp3`);
-    this.load.audio("shurikenHitWood", `${staticPath}/woodhit.wav`);
+    // Shuriken assets loaded in Ninja.preload
   }
 
   create() {
@@ -112,6 +91,9 @@ class GameScene extends Phaser.Scene {
       mangroveMeadow(this);
       cdbg();
     }
+
+    // Ensure all character animations are registered for this scene
+    setupAll(this);
 
     // Creates player object
     createPlayer(
@@ -300,8 +282,6 @@ class GameScene extends Phaser.Scene {
       }
     });
 
-
-
     // Authoritative server snapshots (throttled from server)
     socket.on("state", (payload) => {
       if (payload.gameId !== gameId) return;
@@ -311,34 +291,22 @@ class GameScene extends Phaser.Scene {
       if (stateBuffer.length > MAX_STATE_BUFFER) stateBuffer.shift();
     });
 
-    // When another player attacks, this catches it
+    // When another player attacks, delegate to that player's character module
     socket.on("attack", (data) => {
       cdbg();
-      if (data.returning) {
-        const ownerWrapper =
-          opponentPlayers[data.name] || teamPlayers[data.name];
-        const ownerSprite = ownerWrapper ? ownerWrapper.opponent : null;
-        // Instantiate deterministic returning shuriken (non-owner)
-        const shuriken = new ReturningShuriken(
-          this,
-          { x: data.x, y: data.y },
-          ownerSprite,
-          {
-            direction: data.direction,
-            forwardDistance: data.forwardDistance || 500,
-            outwardDuration: data.outwardDuration || 380,
-            returnSpeed: data.returnSpeed || 900,
-            rotationSpeed: data.rotationSpeed || 2000,
-            scale: data.scale || 0.1,
-            damage: data.damage,
-            isOwner: false,
-          }
-        );
-        // Remote collision optional: omitted for simplicity (authoritative hits by owner only)
-        return;
-      }
-      // Basic non-returning projectile fallback (if ever used)
-      const proj = this.physics.add.image(data.x, data.y, data.weapon);
+      const ownerWrapper = opponentPlayers[data.name] || teamPlayers[data.name];
+      const ownerCharacter = ownerWrapper ? ownerWrapper.character : null;
+      // Try character-specific handler first
+      const handled = ownerCharacter
+        ? handleRemoteAttack(this, ownerCharacter, data, ownerWrapper)
+        : false;
+      if (handled) return;
+      // Generic fallback for simple projectiles
+      const proj = this.physics.add.image(
+        data.x,
+        data.y,
+        data.weapon || "bullet"
+      );
       proj.setScale(data.scale || 0.1);
       proj.setVelocity((data.direction || 1) * 400, 0);
       proj.setAngularVelocity(data.rotationSpeed || 600);

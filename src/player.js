@@ -15,9 +15,11 @@ import {
   tinyPlatform5,
   tinyPlatform6,
 } from "./Maps/mangroveMeadow";
-import { ninjaAnimations } from "./Animations/ninja";
-import ReturningShuriken from "./ReturningShuriken";
-import { spawnDust } from "./effects";
+import {
+  setupFor as setupCharacterFor,
+  createFor as createCharacterFor,
+} from "./characters";
+import { spawnDust, spawnFireFlame } from "./effects";
 // Globals
 let player;
 let cursors;
@@ -62,66 +64,8 @@ let map;
 let opponentPlayersRef; // injected from game.js to avoid circular import
 let fireTrailTimer = 0;
 let fireTrailInterval = 45; // ms
-const firePool = [];
-const firePoolMax = 60;
 let dustTimer = 0;
 const dustInterval = 70; // ms between dust puffs when running
-function spawnFireFlame(scene, x, y) {
-  // Reuse small graphics objects instead of creating rectangles each time
-  let g = firePool.find((o) => !o.active);
-  if (!g) {
-    g = scene.add.graphics();
-    g.active = true;
-    firePool.push(g);
-  }
-  g.clear();
-  g.active = true;
-  g.setDepth(0); // behind player (player depth assumed >0)
-  const baseSize = Phaser.Math.Between(5, 9);
-  // Draw outer glow (red)
-  g.fillStyle(0xff3c00, 0.35);
-  g.fillCircle(0, 0, baseSize);
-  // Mid layer (orange)
-  g.fillStyle(0xff8800, 0.55);
-  g.fillCircle(0, 0, baseSize * 0.65);
-  // Core (yellow/white)
-  g.fillStyle(
-    Phaser.Display.Color.GetColor(255, Phaser.Math.Between(200, 230), 80),
-    0.9
-  );
-  g.fillCircle(0, 0, baseSize * 0.35);
-  g.x = x + Phaser.Math.Between(-3, 3);
-  g.y = y + Phaser.Math.Between(-3, 3);
-  const driftX = Phaser.Math.Between(-12, 12);
-  const driftY = Phaser.Math.Between(-18, -4);
-  const scaleTarget = Phaser.Math.FloatBetween(0.15, 0.35);
-  const duration = Phaser.Math.Between(260, 420);
-  g.scale = 1;
-  scene.tweens.add({
-    targets: g,
-    x: g.x + driftX,
-    y: g.y + driftY,
-    scale: scaleTarget,
-    alpha: 0,
-    duration,
-    ease: "Cubic.easeOut",
-    onComplete: () => {
-      g.active = false;
-      g.alpha = 1;
-      g.scale = 1;
-      g.clear();
-    },
-  });
-  // Cap pool size
-  if (firePool.length > firePoolMax) {
-    const old = firePool.find((o) => !o.active);
-    if (old) {
-      old.destroy();
-      const idx = firePool.indexOf(old);
-      if (idx >= 0) firePool.splice(idx, 1);
-    }
-  }
-}
 
 // Create player function
 export function createPlayer(
@@ -144,9 +88,7 @@ export function createPlayer(
   pdbg();
   cursors = scene.input.keyboard.createCursorKeys();
 
-  if (character === "Ninja") {
-    ninjaAnimations(scene);
-  }
+  setupCharacterFor(scene, character);
 
   // Create player sprite!!
   player = scene.physics.add.sprite(-100, -100, "sprite");
@@ -239,120 +181,33 @@ export function createPlayer(
   indicatorTriangle.fillStyle(0x99ab2c); // Green color
   indicatorTriangle.fillTriangleShape(triangle);
 
-  // When the user taps, it shoots
-  scene.input.on("pointerdown", function (pointer) {
-    // If attack cooldown is finished
-    if (ammoReady && canAttack) {
-      isAttacking = true; // Sets variable for animation
-      canAttack = false; // Sets attack cooldown variable
+  // Character controller wiring (centralized per character)
+  const ammoHooks = {
+    // getters
+    getAmmoReady: () => ammoReady,
+    getCanAttack: () => canAttack,
+    getAmmoCooldownMs: () => ammoCooldownMs,
+    getAmmoTween: () => ammoTween,
+    // setters
+    setAmmoReady: (v) => (ammoReady = v),
+    setCanAttack: (v) => (canAttack = v),
+    setIsAttacking: (v) => (isAttacking = v),
+    setAmmoElapsed: (v) => (ammoElapsed = v),
+    setAmmoTween: (t) => (ammoTween = t),
+    // view
+    drawAmmoBar: () => drawAmmoBar(),
+  };
 
-      // Start cooldown (will instantly refill if projectile returns early)
-      ammoReady = false;
-      ammoElapsed = 0;
-      if (ammoTween) {
-        ammoTween.remove();
-        ammoTween = null;
-      }
-      // Tween that visually fills ammo bar over cooldown
-      const tweenProxy = { t: 0 };
-      ammoTween = scene.tweens.add({
-        targets: tweenProxy,
-        t: 1,
-        duration: ammoCooldownMs,
-        ease: "Linear",
-        onUpdate: () => {
-          ammoElapsed = tweenProxy.t * ammoCooldownMs;
-          drawAmmoBar();
-        },
-        onComplete: () => {
-          ammoElapsed = ammoCooldownMs;
-          ammoReady = true;
-          canAttack = true; // attack key gating
-          drawAmmoBar();
-        },
-      });
-
-      setTimeout(() => {
-        isAttacking = false;
-        // canAttack becomes true only when cooldown completes or projectile returns
-      }, 300); // After 300 miliseconds, the user can attack again
-
-      // Play the sound
-      let shurikenSound = scene.sound.add("shurikenThrow");
-      shurikenSound.setVolume(0.1);
-
-      shurikenSound.setRate(1.3); // Change pitch
-      shurikenSound.play();
-
-      // If the user has ninja character, it throws a shuriken
-      if (character === "Ninja") {
-        player.anims.play("throw", true); // Play throwing animation
-
-        // New returning shuriken projectile
-        const direction = player.flipX ? -1 : 1;
-        const config = {
-          direction,
-          username,
-          gameId,
-          isOwner: true,
-          damage: 1000,
-          rotationSpeed: 2000,
-          forwardDistance: 500,
-          arcHeight: 160,
-          outwardDuration: 380,
-          returnSpeed: 900,
-        };
-        const returning = new ReturningShuriken(
-          scene,
-          { x: player.x, y: player.y },
-          player,
-          config
-        );
-        // Instant cooldown refill on return (early retrieval mechanic)
-        returning.onReturn = () => {
-          // Skip if already ready
-          if (ammoReady) return;
-          ammoElapsed = ammoCooldownMs;
-          ammoReady = true;
-          canAttack = true;
-          if (ammoTween) {
-            ammoTween.remove();
-            ammoTween = null;
-          }
-          drawAmmoBar();
-        };
-
-        // Overlaps: enemies & map objects
-        const enemyList = [];
-        if (opponentPlayersRef) {
-          for (const playerId in opponentPlayersRef) {
-            enemyList.push(opponentPlayersRef[playerId]);
-          }
-        }
-        returning.attachEnemyOverlap(enemyList);
-        // Map objects cause destroy only during outward/hover (handled internally)
-        returning.attachMapOverlap(mapObjects);
-
-        // Emit for remote clients (they will spawn a visual copy following classic straight line fallback for now)
-        socket.emit("attack", {
-          x: player.x,
-          y: player.y,
-          weapon: "shuriken",
-          scale: config.scale || 0.1,
-          damage: config.damage,
-          name: username,
-          returning: true,
-          direction,
-          // send timing params so remote can deterministically simulate
-          forwardDistance: config.forwardDistance,
-          outwardDuration: config.outwardDuration,
-          returnSpeed: config.returnSpeed,
-          rotationSpeed: config.rotationSpeed,
-        });
-        pdbg();
-      }
-    }
+  const ctrl = createCharacterFor(character, {
+    scene,
+    player,
+    username,
+    gameId,
+    opponentPlayersRef,
+    mapObjects,
+    ammoHooks,
   });
+  if (ctrl && ctrl.attachInput) ctrl.attachInput();
 }
 
 // Function to set health of player from another file

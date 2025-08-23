@@ -1,7 +1,7 @@
 // ReturningShuriken.js
 // Curved, returning, piercing shuriken with deterministic local simulation.
 
-import socket from "./socket"; // owner-only hit events
+import socket from "../socket"; // owner-only hit events
 
 export default class ReturningShuriken extends Phaser.Physics.Arcade.Image {
   /**

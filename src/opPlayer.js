@@ -2,6 +2,7 @@
 
 import { base, platform } from "./Maps/lushyPeaks";
 import { calculateSpawn, calculateMangroveSpawn } from "./player";
+import { getTextureKey } from "./characters";
 import socket from "./socket";
 
 export default class OpPlayer {
@@ -33,7 +34,8 @@ export default class OpPlayer {
 
   createOpPlayer() {
     // Creates the sprite
-    this.opponent = this.scene.physics.add.sprite(-100, -100, "sprite");
+    const textureKey = getTextureKey(this.character);
+    this.opponent = this.scene.physics.add.sprite(-100, -100, textureKey);
     this.opponent.body.allowGravity = false;
     this.opponent.anims.play("idle", true);
 
