@@ -1,7 +1,7 @@
 // ReturningShuriken.js
 // Curved, returning, piercing shuriken with deterministic local simulation.
 
-import socket from "../socket"; // owner-only hit events
+import socket from "../../socket"; // owner-only hit events
 
 export default class ReturningShuriken extends Phaser.Physics.Arcade.Image {
   /**
@@ -26,7 +26,7 @@ export default class ReturningShuriken extends Phaser.Physics.Arcade.Image {
         gameId: "",
         isOwner: false,
         maxLifetime: 7000,
-        hitCooldown: 150,
+        hitCooldown: 300,
       },
       config || {}
     );
@@ -116,8 +116,8 @@ export default class ReturningShuriken extends Phaser.Physics.Arcade.Image {
   }
 
   tryDamage(targetWrapper) {
-    if (!this.cfg.isOwner) return; // only owner reports hits
-    if (!targetWrapper) return;
+    if (!this.cfg.isOwner) return false; // only owner reports hits
+    if (!targetWrapper) return false;
     const targetUsername =
       targetWrapper.username ||
       targetWrapper._username ||
@@ -125,14 +125,20 @@ export default class ReturningShuriken extends Phaser.Physics.Arcade.Image {
       "unknown";
     const now = this.scene.time.now;
     const last = this.hitTimestamps[targetUsername] || 0;
-    if (now - last < this.cfg.hitCooldown) return;
+    if (now - last < this.cfg.hitCooldown) return false;
     this.hitTimestamps[targetUsername] = now;
+    // Emit server-authoritative damage event
     socket.emit("hit", {
       attacker: this.cfg.username,
       target: targetUsername,
       damage: this.cfg.damage,
       gameId: this.cfg.gameId,
     });
+    // Play hit SFX locally for the owner
+    try {
+      this.scene.sound.play("shurikenHit", { volume: 0.16, rate: 1.0 });
+    } catch (e) {}
+    return true;
   }
 
   attachEnemyOverlap(objects) {

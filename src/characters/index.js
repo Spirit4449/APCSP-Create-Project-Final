@@ -1,9 +1,25 @@
 // src/characters/index.js
-import Ninja from "./Ninja";
+import Ninja from "./ninja/ninja";
+import Thorg from "./thorg/thorg";
 
 const registry = {
-  Ninja,
-  // Add more characters here, e.g. Samurai: require('./Samurai').default
+  ninja: Ninja,
+  thorg: Thorg,
+};
+
+// Default character stats. Individual characters can override any of these
+const defaultStats = {
+  maxHealth: 8000,
+  ammoCooldownMs: 1200,
+  ammoCapacity: 1, // number of segments/charges in the ammo bar
+  ammoReloadMs: 1200, // time to reload one ammo segment
+  spriteScale: 1,
+  body: {
+    widthShrink: 35,
+    heightShrink: 10,
+    offsetXFromHalf: 0, // additional x offset from half-width
+    offsetY: 10,
+  },
 };
 
 export function preloadAll(scene, staticPath) {
@@ -52,4 +68,57 @@ export function handleRemoteAttack(scene, character, data, ownerWrapper) {
     return true;
   }
   return false;
+}
+
+// Resolve a generic animation key (e.g., 'idle') to a character-specific
+// key (e.g., 'ninja-idle' or 'thorg-idle') if present; otherwise, fallback.
+export function resolveAnimKey(
+  scene,
+  character,
+  genericKey,
+  fallback = "idle"
+) {
+  const char = (character || "").toLowerCase();
+  const anims = scene && scene.anims;
+  if (!anims) return genericKey;
+
+  // If a fully-qualified key is provided (e.g., "ninja-running"):
+  if (genericKey && genericKey.includes("-")) {
+    // 1) If it already matches this character and exists, use it as-is
+    if (
+      genericKey.toLowerCase().startsWith(`${char}-`) &&
+      anims.exists(genericKey)
+    ) {
+      return genericKey;
+    }
+    // 2) Try remapping to this character's namespace preserving the suffix
+    const suffix = genericKey.split("-").slice(1).join("-");
+    const remapped = `${char}-${suffix}`;
+    if (anims.exists(remapped)) return remapped;
+    // 3) As a last resort, if the given key exists (even for other char), return it
+    if (anims.exists(genericKey)) return genericKey;
+  }
+
+  // Generic (unprefixed) resolution flow
+  const preferred = `${char}-${genericKey}`;
+  if (anims.exists(preferred)) return preferred;
+  if (anims.exists(genericKey)) return genericKey;
+  const fbPreferred = `${char}-${fallback}`;
+  if (anims.exists(fbPreferred)) return fbPreferred;
+  return anims.exists(fallback) ? fallback : genericKey;
+}
+
+// Get merged stats for a character (defaults overlaid with character overrides)
+export function getStats(character) {
+  const Cls = registry[character];
+  const overrides =
+    Cls && (typeof Cls.getStats === "function" ? Cls.getStats() : Cls.stats);
+  return {
+    ...defaultStats,
+    ...(overrides || {}),
+    body: {
+      ...defaultStats.body,
+      ...((overrides && overrides.body) || {}),
+    },
+  };
 }

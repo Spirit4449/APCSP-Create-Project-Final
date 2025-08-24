@@ -965,7 +965,7 @@ function createPlayer(sceneParam, name, character, spawnPlatformParam, spawnPara
   opponentPlayersRef = opponentPlayersParam;
   pdbg();
   cursors = scene.input.keyboard.createCursorKeys();
-  if (character === "Ninja") {
+  if (character === "ninja") {
     (0,_Animations_ninja__WEBPACK_IMPORTED_MODULE_3__.ninjaAnimations)(scene);
   }
 

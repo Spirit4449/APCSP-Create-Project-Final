@@ -372,6 +372,10 @@ io.on("connection", (socket) => {
       party[foundIndex].socketId = socket.id;
       party[foundIndex].ready = false; // back to lobby by default
       party[foundIndex].dead = false;
+      // Update character if provided
+      if (data.character || data.selectedValue) {
+        party[foundIndex].character = data.character || data.selectedValue;
+      }
       // Ensure party-level flags reflect lobby state
       party[0]["matchmaking"] = false;
       party[0]["gameStarted"] = false;
@@ -383,6 +387,7 @@ io.on("connection", (socket) => {
       socket.broadcast.emit("user-joined", {
         name: data.name,
         partyId: data.partyId,
+        character: party[foundIndex].character || "ninja",
       });
       return;
     }
@@ -391,7 +396,7 @@ io.on("connection", (socket) => {
     party.push({
       socketId: socket.id,
       name: data.name,
-      character: "Ninja",
+      character: data.character || data.selectedValue || "ninja",
       ready: false,
       dead: false,
       team: "",
@@ -400,6 +405,7 @@ io.on("connection", (socket) => {
     socket.broadcast.emit("user-joined", {
       name: data.name,
       partyId: data.partyId,
+      character: data.character || data.selectedValue || "ninja",
     });
   });
   // When a player joins, a message is sent to everyone else
@@ -546,12 +552,21 @@ io.on("connection", (socket) => {
     }
   });
 
-  // When a player changes character, a message is sent to everyone else
+  // When a player changes character, persist on the member and broadcast
   socket.on("character-change", (data) => {
-    parties[data.partyId][0]["character"] = data.selectedValue; // Sets server value
+    const party = parties[data.partyId];
+    if (!party) return;
+    const newChar = data.selectedValue || data.character || "ninja";
+    for (let i = 1; i < party.length; i++) {
+      const m = party[i];
+      if (m && m.name === data.username) {
+        m.character = newChar;
+        break;
+      }
+    }
     io.emit("character-change", {
       partyId: data.partyId,
-      character: data.selectedValue,
+      character: newChar,
       username: data.username,
     });
   });
@@ -611,6 +626,10 @@ io.on("connection", (socket) => {
       partyArr.forEach((member) => {
         if (data.username === member.name) {
           member.ready = data.ready; // Sets server value
+          // If the client included character here, keep server in sync
+          if (data.character) {
+            member.character = data.character;
+          }
           io.emit("ready", {
             name: data.username,
             ready: data.ready,

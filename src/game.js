@@ -1,9 +1,14 @@
 // game.js
 
-import { lushyPeaks, lushyPeaksObjects } from "./Maps/lushyPeaks";
-import { mangroveMeadow, mangroveMeadowObjects } from "./Maps/mangroveMeadow";
+import { lushyPeaks, lushyPeaksObjects } from "./maps/lushyPeaks";
+import { mangroveMeadow, mangroveMeadowObjects } from "./maps/mangroveMeadow";
 import { createPlayer, player, handlePlayerMovement, dead } from "./player";
-import { preloadAll, handleRemoteAttack, setupAll } from "./characters";
+import {
+  preloadAll,
+  handleRemoteAttack,
+  setupAll,
+  resolveAnimKey,
+} from "./characters";
 import socket from "./socket";
 import OpPlayer from "./opPlayer";
 import { spawnDust, prewarmDust } from "./effects";
@@ -68,15 +73,29 @@ class GameScene extends Phaser.Scene {
     this.load.tilemapTiledJSON("tiles", `${staticPath}/tilesheet.json`);
     this.load.image("lushy-base", `${staticPath}/Lushy/base.png`);
     this.load.image("lushy-platform", `${staticPath}/Lushy/largePlatform.png`);
-    this.load.image("lushy-side-platform", `${staticPath}/Lushy/sidePlatform.png`);
+    this.load.image(
+      "lushy-side-platform",
+      `${staticPath}/Lushy/sidePlatform.png`
+    );
     // this.load.image("lushy-medium-platform", `${staticPath}/Lushy/mediumPlatform.png`);
-    this.load.image("mangrove-tiny-platform", `${staticPath}/Mangrove/tinyPlatform.png`);
-    this.load.image("mangrove-base-left", `${staticPath}/Mangrove/baseLeft.png`);
-    this.load.image("mangrove-base-middle", `${staticPath}/Mangrove/baseMiddle.png`);
-    this.load.image("mangrove-base-right", `${staticPath}/Mangrove/baseRight.png`);
+    this.load.image(
+      "mangrove-tiny-platform",
+      `${staticPath}/Mangrove/tinyPlatform.png`
+    );
+    this.load.image(
+      "mangrove-base-left",
+      `${staticPath}/Mangrove/baseLeft.png`
+    );
+    this.load.image(
+      "mangrove-base-middle",
+      `${staticPath}/Mangrove/baseMiddle.png`
+    );
+    this.load.image(
+      "mangrove-base-right",
+      `${staticPath}/Mangrove/baseRight.png`
+    );
     this.load.image("mangrove-base-top", `${staticPath}/Mangrove/baseTop.png`);
-
-    // Shuriken assets loaded in Ninja.preload
+    this.load.image("fireball", `${staticPath}/fireball.png`);
   }
 
   create() {
@@ -261,7 +280,15 @@ class GameScene extends Phaser.Scene {
 
         // Update flip and animation immediately (these don't need tweening)
         opponentPlayer.opponent.flipX = data.flip;
-        opponentPlayer.opponent.anims.play(data.animation, true);
+        opponentPlayer.opponent.anims.play(
+          resolveAnimKey(
+            this,
+            opponentPlayer.character,
+            data.animation,
+            "idle"
+          ),
+          true
+        );
 
         // Update name tag position
         opponentPlayer.opPlayerName.setPosition(
@@ -301,15 +328,12 @@ class GameScene extends Phaser.Scene {
         ? handleRemoteAttack(this, ownerCharacter, data, ownerWrapper)
         : false;
       if (handled) return;
+      console.log("not handled");
       // Generic fallback for simple projectiles
-      const proj = this.physics.add.image(
-        data.x,
-        data.y,
-        data.weapon || "bullet"
-      );
-      proj.setScale(data.scale || 0.1);
+      const proj = this.physics.add.image(data.x, data.y, "fireball");
+      proj.setScale(0.4);
       proj.setVelocity((data.direction || 1) * 400, 0);
-      proj.setAngularVelocity(data.rotationSpeed || 600);
+      proj.flipX = data?.direction < 0;
       proj.body.allowGravity = false;
     });
 
@@ -345,8 +369,11 @@ class GameScene extends Phaser.Scene {
         }/${partyMembers} players`;
       }
 
-      // Dying animation
-      opponentPlayer.opponent.anims.play("dying", true);
+      // Dying animation (character-aware)
+      opponentPlayer.opponent.anims.play(
+        resolveAnimKey(this, opponentPlayer.character, "dying"),
+        true
+      );
       opponentPlayer.opponent.alpha = 0.5;
       // Use local sprite position (server may send 0 if not persisted yet)
       opponentPlayer.opPlayerName.setPosition(
@@ -498,7 +525,10 @@ class GameScene extends Phaser.Scene {
         const animSrc = bState && bState.animation ? bState : aState;
         spr.flipX = !!animSrc.flip;
         if (animSrc.animation) {
-          spr.anims.play(animSrc.animation, true);
+          spr.anims.play(
+            resolveAnimKey(this, wrapper.character, animSrc.animation, "idle"),
+            true
+          );
         }
 
         // Name tag
@@ -539,7 +569,7 @@ const config = {
     default: "arcade",
     arcade: {
       gravity: { y: 750 },
-      debug: false,
+      debug: true,
     },
   },
 };

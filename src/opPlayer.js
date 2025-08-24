@@ -1,8 +1,8 @@
 // opplayer.js
 
-import { base, platform } from "./Maps/lushyPeaks";
+import { base, platform } from "./maps/lushyPeaks";
 import { calculateSpawn, calculateMangroveSpawn } from "./player";
-import { getTextureKey } from "./characters";
+import { getTextureKey, resolveAnimKey, getStats } from "./characters";
 import socket from "./socket";
 
 export default class OpPlayer {
@@ -36,8 +36,15 @@ export default class OpPlayer {
     // Creates the sprite
     const textureKey = getTextureKey(this.character);
     this.opponent = this.scene.physics.add.sprite(-100, -100, textureKey);
+    const stats = getStats(this.character);
+    if (stats.spriteScale && stats.spriteScale !== 1) {
+      this.opponent.setScale(stats.spriteScale);
+    }
     this.opponent.body.allowGravity = false;
-    this.opponent.anims.play("idle", true);
+    this.opponent.anims.play(
+      resolveAnimKey(this.scene, this.character, "idle"),
+      true
+    );
 
     // Sets spawns
     if (this.spawnPlatform === "bottom") {
@@ -56,11 +63,17 @@ export default class OpPlayer {
 
     // Changes frame size to prevent wall clipping
     this.opFrame = this.opponent.frame;
+    const bs = (stats && stats.body) || {};
+    const widthShrink = bs.widthShrink ?? 35;
+    const heightShrink = bs.heightShrink ?? 10;
     this.opponent.body.setSize(
-      this.opFrame.width - 35,
-      this.opFrame.width - 10
+      this.opFrame.width - widthShrink,
+      this.opFrame.width - heightShrink
     );
-    this.opponent.body.setOffset(this.opponent.body.width / 2, 10);
+    this.opponent.body.setOffset(
+      this.opponent.body.width / 2 + (bs.offsetXFromHalf ?? 0),
+      bs.offsetY ?? 10
+    );
 
     // Sets the text of the name to username
     this.opPlayerName = this.scene.add.text(

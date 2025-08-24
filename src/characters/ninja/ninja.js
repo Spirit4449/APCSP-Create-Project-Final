@@ -1,29 +1,46 @@
 // src/characters/Ninja.js
-import socket from "../socket";
+import socket from "../../socket";
 import ReturningShuriken from "./ReturningShuriken";
-import { ninjaAnimations } from "../Animations/ninja";
+import { ninjaAnimations } from "./anim";
 
 class Ninja {
   // Main texture key used for this character's sprite
-  static textureKey = "sprite";
+  static textureKey = "ninja";
   static getTextureKey() {
     return Ninja.textureKey;
   }
   static preload(scene, staticPath = "/assets") {
     // Load atlas and projectile/sounds
     scene.load.atlas(
-      "sprite",
-      `${staticPath}/Ninja/spritesheet.png`,
-      `${staticPath}/Ninja/animations.json`
+      "ninja",
+      `${staticPath}/ninja/spritesheet.png`,
+      `${staticPath}/ninja/animations.json`
     );
-    scene.load.image("shuriken", `${staticPath}/Ninja/shuriken.png`);
-    scene.load.audio("shurikenThrow", `${staticPath}/Ninja/shurikenThrow.mp3`);
-    scene.load.audio("shurikenHit", `${staticPath}/Ninja/hit.mp3`);
-    scene.load.audio("shurikenHitWood", `${staticPath}/Ninja/woodhit.wav`);
+    scene.load.image("shuriken", `${staticPath}/ninja/shuriken.png`);
+    scene.load.audio("shurikenThrow", `${staticPath}/ninja/shurikenThrow.mp3`);
+    scene.load.audio("shurikenHit", `${staticPath}/ninja/hit.mp3`);
+    scene.load.audio("shurikenHitWood", `${staticPath}/ninja/woodhit.wav`);
   }
 
   static setupAnimations(scene) {
     ninjaAnimations(scene);
+  }
+
+  // Per-character gameplay and presentation stats
+  static getStats() {
+    return {
+      maxHealth: 8000,
+      ammoCooldownMs: 200,
+      ammoReloadMs: 1400,
+      ammoCapacity: 1, // three-segment ammo bar
+      spriteScale: 1,
+      body: {
+        widthShrink: 35,
+        heightShrink: 10,
+        offsetXFromHalf: 0,
+        offsetY: 10,
+      },
+    };
   }
 
   // Handle remote attack events for opponents using this character
@@ -89,50 +106,23 @@ class Ninja {
   handlePointerDown() {
     const p = this.player;
     const {
-      getAmmoReady,
-      setAmmoReady,
-      getCanAttack,
+      getAmmoCapacity,
+      getAmmoCooldownMs,
+      tryConsume,
+      grantCharge,
       setCanAttack,
       setIsAttacking,
-      getAmmoCooldownMs,
-      getAmmoTween,
-      setAmmoTween,
-      setAmmoElapsed,
       drawAmmoBar,
     } = this.ammo;
 
-    if (!getAmmoReady() || !getCanAttack()) return;
-
-    setIsAttacking(true);
+    // Try to consume a charge and respect cooldown/attack gating
+    if (!tryConsume()) return;
     setCanAttack(false);
-    setAmmoReady(false);
-    setAmmoElapsed(0);
+    setIsAttacking(true);
 
-    const oldTween = getAmmoTween();
-    if (oldTween) {
-      oldTween.remove();
-      setAmmoTween(null);
-    }
-
+    // Re-enable attack once per-shot cooldown elapses
     const cooldown = getAmmoCooldownMs();
-    const tweenProxy = { t: 0 };
-    const ammoTween = this.scene.tweens.add({
-      targets: tweenProxy,
-      t: 1,
-      duration: cooldown,
-      ease: "Linear",
-      onUpdate: () => {
-        setAmmoElapsed(tweenProxy.t * cooldown);
-        drawAmmoBar();
-      },
-      onComplete: () => {
-        setAmmoElapsed(cooldown);
-        setAmmoReady(true);
-        setCanAttack(true);
-        drawAmmoBar();
-      },
-    });
-    setAmmoTween(ammoTween);
+    this.scene.time.delayedCall(cooldown, () => setCanAttack(true));
 
     setTimeout(() => setIsAttacking(false), 300);
 
@@ -141,7 +131,12 @@ class Ninja {
     sfx.setRate(1.3);
     sfx.play();
 
-    p.anims.play("throw", true);
+    p.anims.play(
+      this.scene.anims && this.scene.anims.exists("ninja-throw")
+        ? "ninja-throw"
+        : "throw",
+      true
+    );
     const direction = p.flipX ? -1 : 1;
     const config = {
       direction,
@@ -163,16 +158,10 @@ class Ninja {
       config
     );
 
+    // Ninja perk: instantly grant one ammo charge when the shuriken returns
     returning.onReturn = () => {
-      if (getAmmoReady()) return;
-      setAmmoElapsed(cooldown);
-      setAmmoReady(true);
-      setCanAttack(true);
-      const t = getAmmoTween();
-      if (t) {
-        t.remove();
-        setAmmoTween(null);
-      }
+      grantCharge(1);
+      setCanAttack(true); // allow immediate shot after return
       drawAmmoBar();
     };
 
@@ -185,7 +174,6 @@ class Ninja {
     socket.emit("attack", {
       x: p.x,
       y: p.y,
-      weapon: "shuriken",
       scale: config.scale || 0.1,
       damage: config.damage,
       name: this.username,
@@ -196,6 +184,9 @@ class Ninja {
       returnSpeed: config.returnSpeed,
       rotationSpeed: config.rotationSpeed,
     });
+
+    // draw UI after firing
+    drawAmmoBar();
   }
 }
 

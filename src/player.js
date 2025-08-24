@@ -5,7 +5,7 @@ import socket from "./socket";
 function pdbg() {
   /* logging disabled */
 }
-import { lushyPeaksObjects, base, platform } from "./Maps/lushyPeaks";
+import { lushyPeaksObjects, base, platform } from "./maps/lushyPeaks";
 import {
   mangroveMeadowObjects,
   tinyPlatform1,
@@ -14,10 +14,12 @@ import {
   tinyPlatform4,
   tinyPlatform5,
   tinyPlatform6,
-} from "./Maps/mangroveMeadow";
+} from "./maps/mangroveMeadow";
 import {
-  setupFor as setupCharacterFor,
   createFor as createCharacterFor,
+  getTextureKey,
+  resolveAnimKey,
+  getStats,
 } from "./characters";
 import { spawnDust, spawnFireFlame } from "./effects";
 // Globals
@@ -42,10 +44,12 @@ let healthText;
 let ammoBar; // graphics
 let ammoBarBack; // background graphics
 let ammoBarWidth = 60;
-let ammoCooldownMs = 1200; // 2s
-let ammoElapsed = 0; // time since last shot (ms)
-let ammoReady = true;
-let ammoTween; // active tween reference for smooth fill
+let ammoCooldownMs = 1200; // time between shots
+let ammoReloadMs = 1200; // time to reload one charge
+let ammoCapacity = 1; // number of segments
+let ammoCharges = 1; // current charges available
+let nextFireTime = 0; // timestamp (ms) when we can fire again
+let reloadTimerMs = 0; // accumulates while reloading toward ammoReloadMs
 
 let playerName;
 
@@ -55,6 +59,8 @@ let username;
 let gameId = window.location.pathname.split("/").filter(Boolean).pop();
 
 let scene;
+// Persist the selected character so movement helpers can resolve anim keys
+let currentCharacter;
 
 let spawn;
 let playersInTeam;
@@ -85,15 +91,32 @@ export function createPlayer(
   spawnPlatform = spawnPlatformParam;
   map = mapParam;
   opponentPlayersRef = opponentPlayersParam;
+  // Remember the chosen character for animation resolution in update loop
+  currentCharacter = character;
   pdbg();
   cursors = scene.input.keyboard.createCursorKeys();
 
-  setupCharacterFor(scene, character);
+  // Animations are registered globally in game.js via setupAll(scene)
 
-  // Create player sprite!!
-  player = scene.physics.add.sprite(-100, -100, "sprite");
-  player.anims.play("idle", true); // Play idle animation
+  // Create player sprite!! Use character's texture key
+  const textureKey = getTextureKey(character);
+  player = scene.physics.add.sprite(-100, -100, textureKey);
+  player.anims.play(resolveAnimKey(scene, currentCharacter, "idle"), true); // Play idle animation
   pdbg();
+
+  // Apply character stats (health, ammo, sprite/body sizing)
+  const stats = getStats(character);
+  maxHealth = stats.maxHealth ?? maxHealth;
+  currentHealth = maxHealth;
+  ammoCooldownMs = stats.ammoCooldownMs ?? ammoCooldownMs;
+  ammoReloadMs = stats.ammoReloadMs ?? ammoReloadMs;
+  ammoCapacity = Math.max(1, stats.ammoCapacity ?? ammoCapacity);
+  ammoCharges = ammoCapacity;
+  nextFireTime = 0;
+  reloadTimerMs = 0;
+  if (stats.spriteScale && stats.spriteScale !== 1) {
+    player.setScale(stats.spriteScale);
+  }
 
   // Listener to detect if player leaves the world bounds
   scene.events.on("update", () => {
@@ -137,8 +160,14 @@ export function createPlayer(
 
   // Changes size of player frame so it can't clip. There are some issues where the frame changes to fit the animation size so this must be done to prevent that.
   frame = player.frame;
-  player.body.setSize(frame.width - 35, frame.width - 10);
-  player.body.setOffset(player.body.width / 2, 10);
+  const bs = (stats && stats.body) || {};
+  const widthShrink = bs.widthShrink ?? 35;
+  const heightShrink = bs.heightShrink ?? 10;
+  player.body.setSize(frame.width - widthShrink, frame.width - heightShrink);
+  player.body.setOffset(
+    player.body.width / 2 + (bs.offsetXFromHalf ?? 0),
+    bs.offsetY ?? 10
+  );
 
   // Player name text
   playerName = scene.add.text(
@@ -183,17 +212,32 @@ export function createPlayer(
 
   // Character controller wiring (centralized per character)
   const ammoHooks = {
-    // getters
-    getAmmoReady: () => ammoReady,
-    getCanAttack: () => canAttack,
+    // stats
+    getAmmoCapacity: () => ammoCapacity,
     getAmmoCooldownMs: () => ammoCooldownMs,
-    getAmmoTween: () => ammoTween,
-    // setters
-    setAmmoReady: (v) => (ammoReady = v),
+    getAmmoReloadMs: () => ammoReloadMs,
+    // state
+    getCharges: () => ammoCharges,
+    getNextFireTime: () => nextFireTime,
+    // actions
+    tryConsume: () => {
+      const now = Date.now();
+      if (!canAttack) return false;
+      if (now < nextFireTime) return false;
+      if (ammoCharges <= 0) return false;
+      ammoCharges -= 1;
+      nextFireTime = now + ammoCooldownMs;
+      // start/restart reloading if not full
+      if (ammoCharges < ammoCapacity && reloadTimerMs <= 0) reloadTimerMs = 0;
+      return true;
+    },
+    grantCharge: (n = 1) => {
+      ammoCharges = Math.min(ammoCapacity, ammoCharges + n);
+      if (ammoCharges >= ammoCapacity) reloadTimerMs = 0;
+      drawAmmoBar();
+    },
     setCanAttack: (v) => (canAttack = v),
     setIsAttacking: (v) => (isAttacking = v),
-    setAmmoElapsed: (v) => (ammoElapsed = v),
-    setAmmoTween: (t) => (ammoTween = t),
     // view
     drawAmmoBar: () => drawAmmoBar(),
   };
@@ -258,42 +302,47 @@ function updateHealthBar() {
 
 function drawAmmoBar(forcedX, forcedY) {
   if (!ammoBar || !ammoBarBack) return;
-  const percent = Phaser.Math.Clamp(ammoElapsed / ammoCooldownMs, 0, 1);
   const x = forcedX !== undefined ? forcedX : player.x - ammoBarWidth / 2;
   const y =
     forcedY !== undefined ? forcedY : player.y - (player.height / 2 + 8) + 11;
   ammoBarBack.clear();
   ammoBar.clear();
+
   // Background
   ammoBarBack.fillStyle(0x222222, 0.65);
   ammoBarBack.fillRoundedRect(x, y, ammoBarWidth, 6, 3);
   ammoBarBack.lineStyle(2, 0x000000, 0.9);
   ammoBarBack.strokeRoundedRect(x, y, ammoBarWidth, 6, 3);
-  // Fill gradient simulation (two passes)
-  // Red color scheme (darker while charging, bright when ready)
-  const chargingColor = 0xb32121;
-  const readyColor = 0xff4040;
-  // Simple interpolate between dark->bright based on percent
-  const r1 = (chargingColor >> 16) & 0xff;
-  const g1 = (chargingColor >> 8) & 0xff;
-  const b1 = chargingColor & 0xff;
-  const r2 = (readyColor >> 16) & 0xff;
-  const g2 = (readyColor >> 8) & 0xff;
-  const b2 = readyColor & 0xff;
-  const r = Math.round(r1 + (r2 - r1) * percent);
-  const g = Math.round(g1 + (g2 - g1) * percent);
-  const b = Math.round(b1 + (b2 - b1) * percent);
-  const fillColor = (r << 16) | (g << 8) | b;
-  ammoBar.fillStyle(fillColor, 0.95);
-  ammoBar.fillRoundedRect(x, y, ammoBarWidth * percent, 6, 3);
-  // Small highlight overlay for polish
-  ammoBar.fillStyle(0xffffff, 0.25 * (percent < 1 ? 1 : 0.6));
-  ammoBar.fillRoundedRect(x, y, ammoBarWidth * percent, 2, {
-    tl: 3,
-    tr: 3,
-    bl: 0,
-    br: 0,
-  });
+
+  // Draw segmented charges (like Brawl Stars)
+  const gap = 2;
+  const segmentWidth = (ammoBarWidth - gap * (ammoCapacity - 1)) / ammoCapacity;
+  for (let i = 0; i < ammoCapacity; i++) {
+    const segX = x + i * (segmentWidth + gap);
+    // Determine fill for this segment
+    let percent = 0;
+    if (i < ammoCharges) {
+      percent = 1; // full charge
+    } else if (i === ammoCharges) {
+      // currently reloading this segment: percent based on reload progress
+      percent = Phaser.Math.Clamp(reloadTimerMs / ammoReloadMs, 0, 1);
+    } else {
+      percent = 0; // future segments empty
+    }
+    // Colors
+    const emptyColor = 0x333333;
+    const readyColor = 0xff4040;
+    const chargingColor = 0xb32121;
+    const fillColor = percent >= 1 ? readyColor : chargingColor;
+    // Fill base (empty)
+    ammoBar.fillStyle(emptyColor, 0.5);
+    ammoBar.fillRoundedRect(segX, y, segmentWidth, 6, 2);
+    // Fill current percent
+    if (percent > 0) {
+      ammoBar.fillStyle(fillColor, 0.95);
+      ammoBar.fillRoundedRect(segX, y, segmentWidth * percent, 6, 2);
+    }
+  }
   ammoBar.setDepth(2);
   ammoBarBack.setDepth(1);
 }
@@ -358,7 +407,10 @@ export function handlePlayerMovement(scene) {
     isMoving = true; // Sets the isMoving to true
     if (player.body.touching.down && !isAttacking && !dead) {
       // If the player is not in the air or attacking or dead, it plays the running animation
-      player.anims.play("running", true);
+      player.anims.play(
+        resolveAnimKey(scene, currentCharacter, "running"),
+        true
+      );
     }
     // Right movement
   } else if (rightKey) {
@@ -370,7 +422,10 @@ export function handlePlayerMovement(scene) {
     isMoving = true; // Sets moving variable
     if (player.body.touching.down && !isAttacking && !dead) {
       // If the player is not in the air or attacking or dead, it plays the running animation
-      player.anims.play("running", true);
+      player.anims.play(
+        resolveAnimKey(scene, currentCharacter, "running"),
+        true
+      );
     }
   } else {
     stopMoving(); // If no key is being pressed, it calls the stop moving function
@@ -395,7 +450,7 @@ export function handlePlayerMovement(scene) {
     (player.body.touching.left || (player.body.touching.right && !dead)) &&
     !isAttacking
   ) {
-    player.anims.play("sliding", true); // Plays sliding animation
+    player.anims.play(resolveAnimKey(scene, currentCharacter, "sliding"), true); // Plays sliding animation
   }
 
   // Check if the jump animation has completed
@@ -421,6 +476,19 @@ export function handlePlayerMovement(scene) {
 
   updateHealthBar(); // Updates the health bar after the new player position
   playerName.setPosition(player.x, player.y - player.height + 10); // Updates the player nametag with the new position
+
+  // Ammo reload tick
+  if (ammoCharges < ammoCapacity) {
+    reloadTimerMs += scene.game.loop.delta;
+    if (reloadTimerMs >= ammoReloadMs) {
+      reloadTimerMs = 0;
+      ammoCharges = Math.min(ammoCapacity, ammoCharges + 1);
+    }
+  } else {
+    reloadTimerMs = 0; // full, no reload progress
+  }
+  // Redraw ammo bar periodically (cheap draw)
+  if (!dead) drawAmmoBar();
 
   // Fire trail (simple particle substitute)
   fireTrailTimer += scene.game.loop.delta;
@@ -468,7 +536,7 @@ export function handlePlayerMovement(scene) {
   }
 
   function jump() {
-    player.anims.play("jumping", true);
+    player.anims.play(resolveAnimKey(scene, currentCharacter, "jumping"), true);
     pdbg();
     player.setVelocityY(-jumpSpeed);
     isMoving = true;
@@ -477,7 +545,7 @@ export function handlePlayerMovement(scene) {
 
   function wallJump() {
     canWallJump = false;
-    player.anims.play("sliding", true);
+    player.anims.play(resolveAnimKey(scene, currentCharacter, "sliding"), true);
     pdbg();
     player.setVelocityY(-jumpSpeed);
 
@@ -495,13 +563,13 @@ export function handlePlayerMovement(scene) {
   }
 
   function fall() {
-    player.anims.play("falling", true);
+    player.anims.play(resolveAnimKey(scene, currentCharacter, "falling"), true);
     pdbg();
     isJumping = false;
   }
 
   function idle() {
-    player.anims.play("idle", true);
+    player.anims.play(resolveAnimKey(scene, currentCharacter, "idle"), true);
     pdbg();
   }
 }
@@ -525,7 +593,10 @@ socket.on("health-update", (data) => {
     if (currentHealth <= 0) {
       if (!dead) {
         dead = true;
-        player.anims.play("dying", true);
+        player.anims.play(
+          resolveAnimKey(scene, currentCharacter, "dying"),
+          true
+        );
         scene.input.enabled = false;
         player.alpha = 0.5;
         pdbg();

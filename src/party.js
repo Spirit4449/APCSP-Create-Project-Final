@@ -23,9 +23,16 @@ const partyId = window.location.pathname.split("/").filter(Boolean).pop();
 // Username variable
 let username = getCookie("name");
 
+
 if (username) {
   // Emits user-joined to other players
-  socket.emit("user-joined", { name: username, partyId });
+  const selectedChar = character && character.value ? character.value : "ninja";
+  socket.emit("user-joined", {
+    name: username,
+    partyId,
+    character: selectedChar,
+    selectedValue: selectedChar,
+  });
   ptydbg("emit user-joined", { username, partyId });
 } else {
   // If the username does not exist, player is redirected to welcome screen
@@ -40,18 +47,26 @@ function setLobbyBackground(mapValue) {
   const v = String(mapValue);
   if (v === "2") {
     // Mangrove Meadow
-    document.body.style.backgroundImage = 'url("/assets/bg3.jpg")';
+    document.body.style.backgroundImage = 'url("/assets/Mangrove/lobbyBg.jpg")';
   } else {
     // Default map
-    document.body.style.backgroundImage = 'url("/assets/bg2.jpg")';
+    document.body.style.backgroundImage = 'url("/assets/Lushy/lobbyBg.jpg")';
   }
 }
 
 // Initialize the lobby with initial platform setup
+// Initialize character select from last choice if available
+try {
+  const savedChar = sessionStorage.getItem("character");
+  if (savedChar && character) {
+    character.value = savedChar;
+  }
+} catch {}
 checkModeValue();
 
 // Set initial background based on current select value
 setLobbyBackground(map.value);
+
 
 // Set up drag and drop for initial slots
 document.querySelectorAll(".character-slot").forEach((slot) => {
@@ -256,7 +271,7 @@ function setupDragAndDrop(characterSlot, team) {
 
   characterSlot.addEventListener("dragstart", (event) => {
     const username = characterSlot.querySelector(".username").textContent;
-    const character = "Ninja"; // Default for now
+    const character = characterSlot.dataset.character || "ninja"; // Use slot's character
     const status = characterSlot.querySelector(".status").textContent;
 
     if (username !== "Random") {
@@ -332,12 +347,7 @@ function setupDragAndDrop(characterSlot, team) {
       // Emit drop event
       const allSlots = document.querySelectorAll(".character-slot");
       let slotIndex = Array.from(allSlots).indexOf(characterSlot) + 1;
-      socket.emit("drop", {
-        name,
-        character,
-        ready,
-        count: slotIndex,
-      });
+      socket.emit("drop", { name, character, ready, count: slotIndex });
     }
   });
 }
@@ -366,7 +376,14 @@ function swapCharacterSlots(
   if (targetUsername === "Random") {
     updateCharacterSlot(sourceSlot, "Random", "Random", "Invite", true);
   } else {
-    updateCharacterSlot(sourceSlot, targetUsername, "Ninja", targetStatus);
+    const targetCharacter =
+      sourceSlot.dataset.character || targetSlot.dataset.character || "ninja";
+    updateCharacterSlot(
+      sourceSlot,
+      targetUsername,
+      targetCharacter,
+      targetStatus
+    );
   }
 }
 
@@ -381,15 +398,18 @@ function updateCharacterSlot(slot, name, character, status, isRandom = false) {
   if (isRandom || name === "Random") {
     sprite.src = "/assets/random.png";
     sprite.className = "character-sprite random";
+    sprite.alt = "Random";
     statusEl.className = "status invite";
     statusEl.textContent = "Invite";
     statusEl.style.cursor = "pointer";
     slot.className = "character-slot empty";
+    slot.dataset.character = "Random";
   } else {
-    if (character === "Ninja") {
-      sprite.src = "/assets/ninjaIcon.png";
-    }
+    const icon = `/assets/${character}/body.png`;
+    sprite.src = icon;
+    sprite.alt = character;
     sprite.className = "character-sprite";
+    slot.dataset.character = character;
 
     // Update status styling
     const display = status || "Not Ready";
@@ -455,7 +475,13 @@ function updatePeople(name, character, ready) {
 
 character.addEventListener("change", (event) => {
   const selectedValue = event.target.value;
-  socket.emit("character-change", { selectedValue, username, partyId }); // Emits character change
+  sessionStorage.setItem("character", selectedValue);
+  socket.emit("character-change", {
+    selectedValue,
+    username,
+    partyId,
+    character: selectedValue,
+  }); // Emits character change
   ptydbg("emit character-change", { selectedValue });
 });
 
@@ -537,7 +563,14 @@ readyBtn.addEventListener("click", (event) => {
     readyBtn.style.backgroundColor = "";
     readyBtn.value = "Ready";
   }
-  socket.emit("ready", { username, ready, partyId, mode: mode.value }); // Emits ready event
+  const selectedChar = character && character.value ? character.value : "ninja";
+  socket.emit("ready", {
+    username,
+    ready,
+    partyId,
+    mode: mode.value,
+    character: selectedChar,
+  }); // Emits ready event
   ptydbg("emit ready", { username, ready, partyId, mode: mode.value });
 });
 
@@ -551,7 +584,7 @@ socket.on("connection", (data) => {
       map.value = member.map;
     } else {
       let tempName = member.name; // Tempname includes (You)
-      let character = member.character;
+      let character = member.character || member.selectedValue || "ninja";
       if (member.name === username) {
         tempName += " (You)";
       }
@@ -569,7 +602,8 @@ socket.on("connection", (data) => {
 
 socket.on("user-joined", (data) => {
   if (partyId === data.partyId) {
-    updatePeople(data.name, "Ninja", "Not Ready");
+    const ch = data.character || data.selectedValue || "ninja";
+    updatePeople(data.name, ch, "Not Ready");
     ptydbg("recv user-joined", data);
   }
 });
@@ -606,10 +640,12 @@ socket.on("character-change", (data) => {
     const user = document.getElementById(data.username);
     if (user) {
       const img = user.querySelector(".character-sprite");
-      if (data.character === "Ninja") {
-        img.src = "/assets/ninjaIcon.png";
-        img.className = "character-sprite";
-      }
+      const ch = data.character || data.selectedValue || "ninja";
+      const icon = `/assets/${ch}/body.png`;
+      img.src = icon;
+      img.className = "character-sprite";
+      img.alt = ch;
+      user.dataset.character = ch;
     }
   }
 });
