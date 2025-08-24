@@ -104,6 +104,10 @@ class GameScene extends Phaser.Scene {
     // Combat/health SFX
     this.load.audio("sfx-damage", `${staticPath}/damage.mp3`);
     this.load.audio("sfx-heal", `${staticPath}/heal.mp3`);
+    // Music (non-looping bgm, separate win/lose stingers)
+    this.load.audio("main", `${staticPath}/main.wav`);
+    this.load.audio("win", `${staticPath}/win.mp3`);
+    this.load.audio("lose", `${staticPath}/lose.wav`);
   }
 
   create() {
@@ -121,6 +125,32 @@ class GameScene extends Phaser.Scene {
 
     // Ensure all character animations are registered for this scene
     setupAll(this);
+
+    // Background music: play once (2:30 track), no loop, but only after audio unlock (user gesture)
+    this._bgmStarted = false;
+    const startBgm = () => {
+      if (this._bgmStarted) return;
+      this._bgmStarted = true;
+      try {
+        if (!this.bgmMain) {
+          this.bgmMain = this.sound.add("main", {
+            volume: 0.02,
+            loop: false,
+          });
+        }
+        this.bgmMain.play();
+      } catch (e) {}
+    };
+    if (this.sound.locked) {
+      // Phaser will emit 'unlocked' on first user interaction
+      this.sound.once("unlocked", startBgm);
+    } else {
+      // If already unlocked, start immediately; also set a safe first-click hook
+      startBgm();
+    }
+    // Extra safety: if for some reason 'unlocked' doesn't fire, start on first pointer/keydown
+    this.input.once("pointerdown", startBgm);
+    this.input.keyboard?.once("keydown", startBgm);
 
     // Creates player object
     createPlayer(
@@ -403,6 +433,17 @@ class GameScene extends Phaser.Scene {
       cdbg();
       if (gameId === data.gameId) {
         gameEnded = true; // stop emitting further moves
+        // Stop background music and play result music
+        try {
+          if (this.bgmMain && this.bgmMain.isPlaying) this.bgmMain.stop();
+          const isLoser = data.losers.includes(username);
+          const key = isLoser ? "lose" : "win";
+          const vol = isLoser ? 0.5 : 0.6;
+          this.bgmResult = this.sound.add(key, { volume: vol, loop: false });
+          this.bgmResult.play();
+        } catch (e) {
+          // ignore if asset missing
+        }
         const gameOver = document.getElementById("game-over");
         if (data.losers.includes(username)) {
           gameOver.textContent = "You Lose";

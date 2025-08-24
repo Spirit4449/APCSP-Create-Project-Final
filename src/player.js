@@ -418,7 +418,7 @@ export function handlePlayerMovement(scene) {
       sfxWalkCooldown += scene.game.loop.delta;
       if (sfxWalkCooldown >= 280) {
         sfxWalkCooldown = 0;
-        scene.sound.play("sfx-step", { volume: 0.15 });
+        scene.sound.play("sfx-step", { volume: 0.18 });
       }
     }
     // Right movement
@@ -453,7 +453,7 @@ export function handlePlayerMovement(scene) {
       indicatorTriangle.clear(); // Removes indicator triangle if the player has jumped
     }
     jump(); // Calls jump
-    scene.sound.play("sfx-jump", { volume: 0.5 });
+    scene.sound.play("sfx-jump", { volume: 0.6 });
   } else if (
     // If player is touching a wall while jumping
     (player.body.touching.left || (player.body.touching.right && !dead)) &&
@@ -461,7 +461,7 @@ export function handlePlayerMovement(scene) {
     upKey
   ) {
     wallJump(); // Calls walljump
-    scene.sound.play("sfx-walljump", { volume: 0.8 });
+    scene.sound.play("sfx-walljump", { volume: 0.9 });
   }
   if (
     (player.body.touching.left || (player.body.touching.right && !dead)) &&
@@ -497,7 +497,7 @@ export function handlePlayerMovement(scene) {
   // Landing detection (transition airborne -> grounded)
   const onGround = player.body.touching.down;
   if (!wasOnGround && onGround && !dead) {
-    scene.sound.play("sfx-land", { volume: 0.6 });
+    scene.sound.play("sfx-land", { volume: 0.8 });
   }
   wasOnGround = onGround;
 
