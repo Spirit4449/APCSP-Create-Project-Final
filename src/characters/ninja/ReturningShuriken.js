@@ -136,7 +136,7 @@ export default class ReturningShuriken extends Phaser.Physics.Arcade.Image {
     });
     // Play hit SFX locally for the owner
     try {
-      this.scene.sound.play("shurikenHit", { volume: 0.16, rate: 1.0 });
+      this.scene.sound.play("shurikenHit", { volume: 0.1, rate: 1.0 });
     } catch (e) {}
     return true;
   }

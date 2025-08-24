@@ -30,6 +30,9 @@ let isMoving = false;
 let isJumping = false;
 let isAttacking = false;
 let canAttack = true;
+// SFX state
+let sfxWalkCooldown = 0;
+let wasOnGround = false;
 
 let frame;
 
@@ -411,6 +414,12 @@ export function handlePlayerMovement(scene) {
         resolveAnimKey(scene, currentCharacter, "running"),
         true
       );
+      // Footstep SFX throttled
+      sfxWalkCooldown += scene.game.loop.delta;
+      if (sfxWalkCooldown >= 280) {
+        sfxWalkCooldown = 0;
+        scene.sound.play("sfx-step", { volume: 0.15 });
+      }
     }
     // Right movement
   } else if (rightKey) {
@@ -426,6 +435,12 @@ export function handlePlayerMovement(scene) {
         resolveAnimKey(scene, currentCharacter, "running"),
         true
       );
+      // Footstep SFX throttled
+      sfxWalkCooldown += scene.game.loop.delta;
+      if (sfxWalkCooldown >= 280) {
+        sfxWalkCooldown = 0;
+        scene.sound.play("sfx-step", { volume: 0.2 });
+      }
     }
   } else {
     stopMoving(); // If no key is being pressed, it calls the stop moving function
@@ -438,6 +453,7 @@ export function handlePlayerMovement(scene) {
       indicatorTriangle.clear(); // Removes indicator triangle if the player has jumped
     }
     jump(); // Calls jump
+    scene.sound.play("sfx-jump", { volume: 0.5 });
   } else if (
     // If player is touching a wall while jumping
     (player.body.touching.left || (player.body.touching.right && !dead)) &&
@@ -445,6 +461,7 @@ export function handlePlayerMovement(scene) {
     upKey
   ) {
     wallJump(); // Calls walljump
+    scene.sound.play("sfx-walljump", { volume: 0.8 });
   }
   if (
     (player.body.touching.left || (player.body.touching.right && !dead)) &&
@@ -477,6 +494,13 @@ export function handlePlayerMovement(scene) {
   updateHealthBar(); // Updates the health bar after the new player position
   playerName.setPosition(player.x, player.y - player.height + 10); // Updates the player nametag with the new position
 
+  // Landing detection (transition airborne -> grounded)
+  const onGround = player.body.touching.down;
+  if (!wasOnGround && onGround && !dead) {
+    scene.sound.play("sfx-land", { volume: 0.6 });
+  }
+  wasOnGround = onGround;
+
   // Ammo reload tick
   if (ammoCharges < ammoCapacity) {
     reloadTimerMs += scene.game.loop.delta;
@@ -490,7 +514,7 @@ export function handlePlayerMovement(scene) {
   // Redraw ammo bar periodically (cheap draw)
   if (!dead) drawAmmoBar();
 
-  // Fire trail (simple particle substitute)
+  // Fire trail (simpleaaaaaaaaaaaa particle substitute)
   fireTrailTimer += scene.game.loop.delta;
   dustTimer += scene.game.loop.delta;
   if (
@@ -548,6 +572,7 @@ export function handlePlayerMovement(scene) {
     player.anims.play(resolveAnimKey(scene, currentCharacter, "sliding"), true);
     pdbg();
     player.setVelocityY(-jumpSpeed);
+    // Horizontal kick and sound handled above
 
     const wallJumpTween = scene.tweens.add({
       // This tween smooths the kickback from the walljump
@@ -588,8 +613,19 @@ export {
 socket.on("health-update", (data) => {
   if (data.gameId !== gameId) return;
   if (data.username === username) {
+    const prev = currentHealth;
     currentHealth = data.health;
     pdbg();
+    // SFX: play damage vs heal feedback
+    if (scene && scene.sound && !dead) {
+      const delta = currentHealth - prev;
+      if (delta < 0) {
+        // Took damage
+        scene.sound.play("sfx-damage", { volume: 0.1 });
+      } else if (delta > 0) {
+        const s = scene.sound.add("sfx-heal", { volume: 0.1 });
+      }
+    }
     if (currentHealth <= 0) {
       if (!dead) {
         dead = true;

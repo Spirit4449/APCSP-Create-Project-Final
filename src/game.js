@@ -95,7 +95,15 @@ class GameScene extends Phaser.Scene {
       `${staticPath}/Mangrove/baseRight.png`
     );
     this.load.image("mangrove-base-top", `${staticPath}/Mangrove/baseTop.png`);
-    this.load.image("fireball", `${staticPath}/fireball.png`);
+    this.load.image("thorg-weapon", `${staticPath}/thorg/weapon.png`);
+    // Movement SFX (place files under /assets/audio)
+    this.load.audio("sfx-step", `${staticPath}/step.ogg`);
+    this.load.audio("sfx-jump", `${staticPath}/jump.mp3`);
+    this.load.audio("sfx-land", `${staticPath}/land.mp3`);
+    this.load.audio("sfx-walljump", `${staticPath}/walljump.mp3`);
+    // Combat/health SFX
+    this.load.audio("sfx-damage", `${staticPath}/damage.mp3`);
+    this.load.audio("sfx-heal", `${staticPath}/heal.mp3`);
   }
 
   create() {
@@ -144,7 +152,6 @@ class GameScene extends Phaser.Scene {
     document.getElementById(
       "opposing-team"
     ).textContent = `Opposing Team: ${partyMembers}/${partyMembers} players`;
-
     // Emits player-joined and creates the op player objects
     socket.emit("player-joined", { username, character });
     cdbg();

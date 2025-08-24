@@ -37,6 +37,11 @@ export default class OpPlayer {
     const textureKey = getTextureKey(this.character);
     this.opponent = this.scene.physics.add.sprite(-100, -100, textureKey);
     const stats = getStats(this.character);
+    // Apply per-character max health for correct bar scaling
+    if (stats && typeof stats.maxHealth === "number") {
+      this.opMaxHealth = stats.maxHealth;
+      this.opCurrentHealth = this.opMaxHealth;
+    }
     if (stats.spriteScale && stats.spriteScale !== 1) {
       this.opponent.setScale(stats.spriteScale);
     }
@@ -121,7 +126,10 @@ export default class OpPlayer {
       this.opCurrentHealth = 0;
     }
     // Sets percentage of health
-    const healthPercentage = this.opCurrentHealth / this.opMaxHealth;
+    const healthPercentage = Math.max(
+      0,
+      Math.min(1, this.opCurrentHealth / this.opMaxHealth)
+    );
     const displayedWidth = this.opHealthBarWidth * healthPercentage;
 
     // Clears previous health bar graphics

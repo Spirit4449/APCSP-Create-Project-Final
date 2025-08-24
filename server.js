@@ -45,6 +45,21 @@ const names = [];
 const parties = {};
 // Dictionary of games
 const games = {};
+// Health regeneration config
+const REGEN_TICK_MS = 1500; // apply regen every 1.5s
+const REGEN_IDLE_DELAY_MS = 3000; // ms after last attack to start regen
+const REGEN_HIT_IDLE_DELAY_MS = 3000; // ms after being hit to start regen
+const REGEN_MIN_PER_TICK = 500; // minimum heal per tick when tapering
+const REGEN_FRIENDLY_STEP = 50; // quantize regen to multiples of 50
+const REGEN_MISSING_FRACTION_PER_TICK = 0.30; // 25% of missing health per tick
+
+// Minimal character -> maxHealth mapping (keep in sync with client stats)
+function getMaxHealthForCharacter(character) {
+  const key = String(character || "").toLowerCase();
+  if (key === "thorg") return 12000;
+  // default ninja and others
+  return 8000;
+}
 
 // Debug logging removed for production cleanliness
 
@@ -435,6 +450,26 @@ io.on("connection", (socket) => {
   });
   // When a player attacks, a message is sent to everyone else
   socket.on("attack", (data) => {
+    // Record last attack time for regen gating
+    try {
+      const attackerName = data && data.name;
+      if (attackerName) {
+        for (const gameId in games) {
+          const game = games[gameId];
+          for (const teamKey in game) {
+            const team = game[teamKey];
+            for (const idx in team) {
+              const p = team[idx];
+              if (p && p.name === attackerName) {
+                p.lastAttackAt = Date.now();
+              }
+            }
+          }
+        }
+      }
+    } catch (e) {
+      // swallow
+    }
     socket.broadcast.emit("attack", data);
   });
   // Removed projectile-update/destroy (deterministic client simulation now)
@@ -458,6 +493,8 @@ io.on("connection", (socket) => {
           }
           p.currentHealth -= damage;
           if (p.currentHealth < 0) p.currentHealth = 0;
+          // Record last time this target was hit (gates regen)
+          p.lastHitAt = Date.now();
           targetPlayerObj = p;
           targetTeam = team;
         }
@@ -786,6 +823,56 @@ io.on("connection", (socket) => {
     }
   });
 });
+
+// Server-authoritative health regeneration loop
+setInterval(() => {
+  try {
+    const now = Date.now();
+    for (const gameId in games) {
+      const game = games[gameId];
+      for (const teamKey in game) {
+        const team = game[teamKey];
+        for (const idx in team) {
+          const p = team[idx];
+          if (!p || p.dead === true) continue;
+          // Initialize health fields if missing
+          if (typeof p.maxHealth !== "number") {
+            p.maxHealth = getMaxHealthForCharacter(p.character);
+          }
+          if (typeof p.currentHealth !== "number") {
+            p.currentHealth = p.maxHealth;
+          }
+          if (p.currentHealth <= 0 || p.currentHealth >= p.maxHealth) continue;
+          const lastAtk = typeof p.lastAttackAt === "number" ? p.lastAttackAt : 0;
+          const lastHit = typeof p.lastHitAt === "number" ? p.lastHitAt : 0;
+          // Must satisfy both idle windows: 3s since last attack, 4s since last hit
+          if (now - lastAtk < REGEN_IDLE_DELAY_MS) continue;
+          if (now - lastHit < REGEN_HIT_IDLE_DELAY_MS) continue;
+          const missing = Math.max(0, p.maxHealth - p.currentHealth);
+          const scaled = Math.floor(missing * REGEN_MISSING_FRACTION_PER_TICK);
+          const rawDelta = Math.max(REGEN_MIN_PER_TICK, scaled);
+          // Quantize to friendly steps of 50
+          const friendlyDelta = Math.max(
+            REGEN_FRIENDLY_STEP,
+            Math.round(rawDelta / REGEN_FRIENDLY_STEP) * REGEN_FRIENDLY_STEP
+          );
+          const deltaHp = Math.min(friendlyDelta, missing);
+          const newHealth = Math.min(p.maxHealth, p.currentHealth + deltaHp);
+          if (newHealth !== p.currentHealth) {
+            p.currentHealth = newHealth;
+            io.emit("health-update", {
+              username: p.name,
+              health: p.currentHealth,
+              gameId,
+            });
+          }
+        }
+      }
+    }
+  } catch (e) {
+    // swallow
+  }
+}, REGEN_TICK_MS);
 
 // Start the server
 server.listen(port, () => {

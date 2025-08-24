@@ -1096,7 +1096,7 @@ function createPlayer(sceneParam, name, character, spawnPlatformParam, spawnPara
 
       // Play the sound
       var shurikenSound = scene.sound.add("shurikenThrow");
-      shurikenSound.setVolume(0.1);
+      shurikenSound.setVolume(0.08);
       shurikenSound.setRate(1.3); // Change pitch
       shurikenSound.play();
 
