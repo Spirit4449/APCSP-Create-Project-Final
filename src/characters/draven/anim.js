@@ -1,5 +1,5 @@
 export function animations(scene) {
-  const NAME = "thorg";
+  const NAME = "draven";
   const tex = scene.textures.get(NAME);
   const allNames = (tex && tex.getFrameNames()) || [];
   const lower = new Map(allNames.map((n) => [n.toLowerCase(), n]));

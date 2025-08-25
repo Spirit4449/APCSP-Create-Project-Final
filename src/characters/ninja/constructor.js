@@ -1,29 +1,35 @@
 // src/characters/Ninja.js
 import socket from "../../socket";
-import ReturningShuriken from "./ReturningShuriken";
-import { ninjaAnimations } from "./anim";
+import ReturningShuriken from "./attack";
+import { animations } from "./anim";
+
+// Single source of truth for this character's name/key
+const NAME = "ninja";
 
 class Ninja {
   // Main texture key used for this character's sprite
-  static textureKey = "ninja";
+  static textureKey = NAME;
   static getTextureKey() {
     return Ninja.textureKey;
   }
   static preload(scene, staticPath = "/assets") {
     // Load atlas and projectile/sounds
     scene.load.atlas(
-      "ninja",
-      `${staticPath}/ninja/spritesheet.png`,
-      `${staticPath}/ninja/animations.json`
+      NAME,
+      `${staticPath}/${NAME}/spritesheet.png`,
+      `${staticPath}/${NAME}/animations.json`
     );
-    scene.load.image("shuriken", `${staticPath}/ninja/shuriken.png`);
-    scene.load.audio("shurikenThrow", `${staticPath}/ninja/shurikenThrow.mp3`);
-    scene.load.audio("shurikenHit", `${staticPath}/ninja/hit.mp3`);
-    scene.load.audio("shurikenHitWood", `${staticPath}/ninja/woodhit.wav`);
+    scene.load.image("shuriken", `${staticPath}/${NAME}/shuriken.png`);
+    scene.load.audio(
+      "shurikenThrow",
+      `${staticPath}/${NAME}/shurikenThrow.mp3`
+    );
+    scene.load.audio("shurikenHit", `${staticPath}/${NAME}/hit.mp3`);
+    scene.load.audio("shurikenHitWood", `${staticPath}/${NAME}/woodhit.wav`);
   }
 
   static setupAnimations(scene) {
-    ninjaAnimations(scene);
+    animations(scene);
   }
 
   // Per-character gameplay and presentation stats
@@ -132,8 +138,8 @@ class Ninja {
     sfx.play();
 
     p.anims.play(
-      this.scene.anims && this.scene.anims.exists("ninja-throw")
-        ? "ninja-throw"
+      this.scene.anims && this.scene.anims.exists(`${NAME}-throw`)
+        ? `${NAME}-throw`
         : "throw",
       true
     );

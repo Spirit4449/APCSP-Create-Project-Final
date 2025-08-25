@@ -1,10 +1,12 @@
 // src/characters/index.js
-import Ninja from "./ninja/ninja";
-import Thorg from "./thorg/thorg";
+import Ninja from "./ninja/constructor";
+import Thorg from "./thorg/constructor";
+import Draven from "./draven/constructor";
 
 const registry = {
   ninja: Ninja,
   thorg: Thorg,
+  draven: Draven,
 };
 
 // Default character stats. Individual characters can override any of these

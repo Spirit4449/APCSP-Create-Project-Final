@@ -1,19 +1,22 @@
 // src/characters/thorg/thorg.js
 import socket from "../../socket";
-import { thorgAnimations } from "./anim";
+import { animations } from "./anim";
+
+// Single source of truth for this character's name/key
+const NAME = "thorg";
 
 class Thorg {
   // Main texture key used for this character's sprite
-  static textureKey = "thorg";
+  static textureKey = NAME;
   static getTextureKey() {
     return Thorg.textureKey;
   }
   static preload(scene, staticPath = "/assets") {
     // Load atlas and projectile/sounds
     scene.load.atlas(
-      "thorg",
-      `${staticPath}/thorg/spritesheet.png`,
-      `${staticPath}/thorg/animations.json`
+      NAME,
+      `${staticPath}/${NAME}/spritesheet.png`,
+      `${staticPath}/${NAME}/animations.json`
     );
     // Optional VFX sprite (place at /assets/thorg/slash.png). Falls back to vector if missing.
     // scene.load.image("shuriken", `${staticPath}/thorg/shuriken.png`);
@@ -22,12 +25,12 @@ class Thorg {
   }
 
   static setupAnimations(scene) {
-    thorgAnimations(scene);
+    animations(scene);
   }
 
   // Remote attack visualization for Thorg (slash effect only)
   static handleRemoteAttack(scene, data, ownerWrapper) {
-    if (data.type !== "thorg-weapon") return false;
+    if (data.type !== `${NAME}-slash`) return false;
     const ownerSprite = ownerWrapper ? ownerWrapper.opponent : null;
     if (!ownerSprite) return true; // nothing to show
     // Spawn a visual-only slash effect attached to the owner sprite
@@ -50,7 +53,7 @@ class Thorg {
     duration = 300
   ) {
     // If we have an image, animate it along an overhead oval path. Otherwise, fallback to vector band.
-    const hasTex = scene.textures.exists("thorg-weapon");
+    const hasTex = scene.textures.exists(`${NAME}-weapon`);
     const originOffsetY = sprite.height * 0.1;
     const cx = () => sprite.x + (direction >= 0 ? 10 : -10);
     const cy = () => sprite.y - originOffsetY;
@@ -60,7 +63,7 @@ class Thorg {
     const endRad = Phaser.Math.DegToRad(90);
 
     if (hasTex) {
-      const eff = scene.add.image(cx(), cy(), "thorg-weapon");
+      const eff = scene.add.image(cx(), cy(), `${NAME}-weapon`);
       eff.setDepth(6);
       eff.setScale(0.9);
       eff.setOrigin(direction >= 0 ? 0.1 : 0.9, 0.5); // pivot near the sword
@@ -220,11 +223,11 @@ class Thorg {
     // Play slash-ish animation (reuse throw if no dedicated one)
     if (
       this.scene.anims &&
-      (this.scene.anims.exists("thorg-throw") ||
+      (this.scene.anims.exists(`${NAME}-throw`) ||
         this.scene.anims.exists("throw"))
     ) {
       p.anims.play(
-        this.scene.anims.exists("thorg-throw") ? "thorg-throw" : "throw",
+        this.scene.anims.exists(`${NAME}-throw`) ? `${NAME}-throw` : "throw",
         true
       );
     }
@@ -283,7 +286,7 @@ class Thorg {
     // Broadcast to others to render the effect
     socket.emit("attack", {
       name: this.username,
-      type: "thorg-slash",
+      type: `${NAME}-slash`,
       direction,
       range,
       duration,

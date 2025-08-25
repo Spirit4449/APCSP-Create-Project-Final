@@ -1,4 +1,4 @@
-export function ninjaAnimations(scene) {
+export function animations(scene) {
   if (!scene.anims.exists("ninja-running"))
     scene.anims.create({
       key: "ninja-running", // Name of animation
