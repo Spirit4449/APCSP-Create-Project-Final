@@ -67,7 +67,7 @@ export default class OpPlayer {
     const heightShrink = bs.heightShrink ?? 10;
     this.opponent.body.setSize(
       this.opFrame.width - widthShrink,
-      this.opFrame.width - heightShrink
+      this.opFrame.height - heightShrink
     );
     this.applyFlipOffset();
 
@@ -102,7 +102,7 @@ export default class OpPlayer {
       : this.opponent.y - this.opponent.height / 2;
     this.opPlayerName = this.scene.add.text(
       this.opponent.x,
-      bodyTop - 20,
+      bodyTop - 36,
       this.username
     );
     this.opPlayerName.setStyle({
@@ -110,6 +110,7 @@ export default class OpPlayer {
       fill: "#000000",
     });
     this.opPlayerName.setOrigin(0.5, 0);
+    this.opPlayerName.setDepth(3); // above health text
 
     this.opHealthText = this.scene.add.text(0, 0, "", {
       fontFamily: "Arial",
@@ -178,7 +179,7 @@ export default class OpPlayer {
       ? this.opponent.body.y
       : this.opponent.y - this.opponent.height / 2;
     if (this.opPlayerName) {
-      this.opPlayerName.setPosition(this.opponent.x, bodyTop - 20);
+      this.opPlayerName.setPosition(this.opponent.x, bodyTop - 36);
     }
     this.updateHealthBar(false);
   }

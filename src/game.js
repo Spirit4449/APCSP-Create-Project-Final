@@ -322,11 +322,10 @@ class GameScene extends Phaser.Scene {
             duration: tweenDuration,
             ease: "Power2.easeOut", // Smoother easing function
             onUpdate: () => {
-              // Update name tag position during tween
-              opponentPlayer.opPlayerName.setPosition(
-                opponentPlayer.opponent.x,
-                opponentPlayer.opponent.y - opponentPlayer.opponent.height + 10
-              );
+              // Update name tag position during tween using bodyTop
+              const spr = opponentPlayer.opponent;
+              const bodyTop = spr.body ? spr.body.y : spr.y - spr.height / 2;
+              opponentPlayer.opPlayerName.setPosition(spr.x, bodyTop - 36);
             },
             onComplete: () => {
               opponentPlayer.movementTween = null;
@@ -355,7 +354,7 @@ class GameScene extends Phaser.Scene {
           : opponentPlayer.opponent.y - opponentPlayer.opponent.height / 2;
         opponentPlayer.opPlayerName.setPosition(
           opponentPlayer.opponent.x,
-          bodyTop - 20
+          bodyTop - 36
         );
 
         // Remote running dust (approximate: if moved horizontally enough)
@@ -482,8 +481,12 @@ class GameScene extends Phaser.Scene {
 
         // Sets end screen name to player name
         document.getElementById("username-text").textContent = username;
-        document.getElementById("character-text").textContent = `${character[0].toUpperCase() + character.slice(1)}`;
-        document.getElementById("character-image").src = `/assets/${character}/body.png`;
+        document.getElementById("character-text").textContent = `${
+          character[0].toUpperCase() + character.slice(1)
+        }`;
+        document.getElementById(
+          "character-image"
+        ).src = `/assets/${character}/body.png`;
 
         setTimeout(() => {
           // Runs after 1 second of death
@@ -616,7 +619,7 @@ class GameScene extends Phaser.Scene {
 
         // Name tag
         const bodyTop = spr.body ? spr.body.y : spr.y - spr.height / 2;
-        wrapper.opPlayerName.setPosition(spr.x, bodyTop - 20);
+        wrapper.opPlayerName.setPosition(spr.x, bodyTop - 36);
       };
 
       for (const name in opponentPlayers)
