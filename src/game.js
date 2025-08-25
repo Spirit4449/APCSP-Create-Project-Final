@@ -166,6 +166,23 @@ class GameScene extends Phaser.Scene {
       opponentPlayers
     );
     cdbg();
+    // Toggle physics debug with Ctrl+M
+    this.input.keyboard.on("keydown-M", (e) => {
+      if (!e.ctrlKey) return;
+      const world = this.physics?.world;
+      if (!world) return;
+      // Flip debug draw state
+      world.drawDebug = !world.drawDebug;
+      // Clear previous graphics and show/hide accordingly
+      if (world.debugGraphic) {
+        world.debugGraphic.clear();
+        world.debugGraphic.setVisible(world.drawDebug);
+      }
+      // Also update the config reference if present (helps some plugins check)
+      if (this.sys?.game?.config?.physics?.arcade) {
+        this.sys.game.config.physics.arcade.debug = world.drawDebug;
+      }
+    });
     // Adds collision between map and player
 
     mapObjects.forEach((mapObject) => {
@@ -346,9 +363,11 @@ class GameScene extends Phaser.Scene {
           opponentPlayer._dustTimer = (opponentPlayer._dustTimer || 0) + 16; // approximate frame delta
           if (opponentPlayer._dustTimer >= 70) {
             opponentPlayer._dustTimer = 0;
-            const dY =
-              opponentPlayer.opponent.y + opponentPlayer.opponent.height * 0.45;
-            spawnDust(this, opponentPlayer.opponent.x, dY);
+            const spr = opponentPlayer.opponent;
+            const bottom = spr.body
+              ? spr.body.y + spr.body.height
+              : spr.y + spr.height / 2;
+            spawnDust(this, spr.x, bottom - 2);
           }
         }
       }
@@ -463,7 +482,8 @@ class GameScene extends Phaser.Scene {
 
         // Sets end screen name to player name
         document.getElementById("username-text").textContent = username;
-        document.getElementById("character-text").textContent = character;
+        document.getElementById("character-text").textContent = `${character[0].toUpperCase() + character.slice(1)}`;
+        document.getElementById("character-image").src = `/assets/${character}/body.png`;
 
         setTimeout(() => {
           // Runs after 1 second of death

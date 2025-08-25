@@ -1,6 +1,7 @@
 // src/characters/draven/draven.js
 import socket from "../../socket";
 import { animations } from "./anim";
+import DravenEffects from "./effects";
 
 // Single source of truth for this character's name/key
 const NAME = "draven";
@@ -8,6 +9,8 @@ const NAME = "draven";
 class draven {
   // Main texture key used for this character's sprite
   static textureKey = NAME;
+  // Optional per-player effects class to be used for this character
+  static Effects = DravenEffects;
   static getTextureKey() {
     return draven.textureKey;
   }

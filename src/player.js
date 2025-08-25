@@ -20,8 +20,9 @@ import {
   getTextureKey,
   resolveAnimKey,
   getStats,
+  getEffectsClass,
 } from "./characters";
-import { spawnDust, spawnFireFlame } from "./effects";
+import { spawnDust } from "./effects";
 // Globals
 let player;
 let cursors;
@@ -71,14 +72,13 @@ let spawnPlatform;
 let mapObjects;
 let map;
 let opponentPlayersRef; // injected from game.js to avoid circular import
-let fireTrailTimer = 0;
-let fireTrailInterval = 45; // ms
 let dustTimer = 0;
 const dustInterval = 70; // ms between dust puffs when running
 
 // Body config and flip-offset applier hoisted for use across functions
 let bodyConfig = null;
 let applyFlipOffsetLocal = null;
+let charEffects = null; // per-character, per-player effects handler (e.g., Draven fire)
 
 // Create player function
 export function createPlayer(
@@ -273,6 +273,10 @@ export function createPlayer(
     ammoHooks,
   });
   if (ctrl && ctrl.attachInput) ctrl.attachInput();
+
+  // Per-character effects: instantiate if the character provides an Effects class
+  const EffectsCls = getEffectsClass(currentCharacter);
+  charEffects = EffectsCls ? new EffectsCls(scene, player) : null;
 }
 
 // Function to set health of player from another file
@@ -291,13 +295,13 @@ function updateHealthBar() {
   healthBar.clear(); // Clear the graphics before redrawing
 
   const healthBarX = player.x - healthBarWidth / 2;
-  let healthBarY;
   const bodyTop = player.body ? player.body.y : player.y - player.height / 2;
+  // Always anchor to bodyTop so it doesn't jump when dead
+  const y = bodyTop - 20; // just above body
+
   if (!dead) {
-    healthBarY = bodyTop - 20; // just above body
     healthText.setText(`${currentHealth}`);
   } else {
-    healthBarY = player.y - (player.height / 2 - 24);
     // Show 0 instead of blank when dead
     healthText.setText(`0`);
     playerName.setPosition(player.x, playerName.y + 30);
@@ -305,21 +309,21 @@ function updateHealthBar() {
 
   // Draw the background rectangle with the default fill color
   healthBar.fillStyle(0x595959);
-  healthBar.fillRect(healthBarX, healthBarY, healthBarWidth, 9);
+  healthBar.fillRect(healthBarX, y, healthBarWidth, 9);
 
   // Draw the health bar background (stroke)
   healthBar.lineStyle(3, 0x000000);
-  healthBar.strokeRoundedRect(healthBarX, healthBarY, healthBarWidth, 9, 3);
+  healthBar.strokeRoundedRect(healthBarX, y, healthBarWidth, 9, 3);
 
   // Draw the filled part of the health bar (green)
   healthBar.fillStyle(0x99ab2c);
-  healthBar.fillRoundedRect(healthBarX, healthBarY, displayedWidth, 9, 3);
+  healthBar.fillRoundedRect(healthBarX, y, displayedWidth, 9, 3);
 
-  healthText.setPosition(player.x - healthText.width / 2, healthBarY - 8);
+  healthText.setPosition(player.x - healthText.width / 2, y - 8);
   healthText.setDepth(2);
 
   // Draw ammo bar underneath health (only for local player & when alive)
-  drawAmmoBar(healthBarX, healthBarY + 11);
+  drawAmmoBar(healthBarX, y + 11);
 }
 
 function drawAmmoBar(forcedX, forcedY) {
@@ -541,24 +545,12 @@ export function handlePlayerMovement(scene) {
   // Redraw ammo bar periodically (cheap draw)
   if (!dead) drawAmmoBar();
 
-  // Fire trail (simpleaaaaaaaaaaaa particle substitute)
-  fireTrailTimer += scene.game.loop.delta;
-  dustTimer += scene.game.loop.delta;
-  if (
-    !dead &&
-    fireTrailTimer >= fireTrailInterval &&
-    isMoving && // only when actually moving horizontally
-    !dead
-  ) {
-    fireTrailTimer = 0;
-    const baseX = player.x - (player.flipX ? -14 : 14);
-    const baseY = player.y + 8;
-    // Spawn 1-2 layered flames each interval
-    const count = Phaser.Math.Between(1, 2);
-    for (let i = 0; i < count; i++) {
-      spawnFireFlame(scene, baseX, baseY);
-    }
+  // Per-character effects update (e.g., Draven fire trail)
+  if (charEffects) {
+    charEffects.update(scene.game.loop.delta, isMoving, dead);
   }
+
+  dustTimer += scene.game.loop.delta;
 
   // Ground running dust (only while on ground & moving)
   if (
@@ -568,7 +560,11 @@ export function handlePlayerMovement(scene) {
     dustTimer >= dustInterval
   ) {
     dustTimer = 0;
-    const dustY = player.y + player.height * 0.45; // near feet
+    // Spawn at the physics body's bottom to account for per-character frame sizing
+    const bodyBottom = player.body
+      ? player.body.y + player.body.height
+      : player.y + player.height / 2;
+    const dustY = bodyBottom - 2; // slight lift to avoid z-fighting
     const dustX = player.x + (player.flipX ? -18 : 18) * 0.3;
     spawnDust(scene, dustX, dustY);
     if (Math.random() < 0.3) {

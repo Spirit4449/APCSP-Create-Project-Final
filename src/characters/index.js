@@ -124,3 +124,14 @@ export function getStats(character) {
     },
   };
 }
+
+// Optional: returns the Effects class for a character, or null if none
+export function getEffectsClass(character) {
+  const Cls = registry[character];
+  return (
+    (Cls &&
+      (Cls.Effects ||
+        (typeof Cls.getEffects === "function" && Cls.getEffects()))) ||
+    null
+  );
+}

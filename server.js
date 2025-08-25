@@ -51,14 +51,33 @@ const REGEN_IDLE_DELAY_MS = 3000; // ms after last attack to start regen
 const REGEN_HIT_IDLE_DELAY_MS = 3000; // ms after being hit to start regen
 const REGEN_MIN_PER_TICK = 500; // minimum heal per tick when tapering
 const REGEN_FRIENDLY_STEP = 50; // quantize regen to multiples of 50
-const REGEN_MISSING_FRACTION_PER_TICK = 0.30; // 25% of missing health per tick
+const REGEN_MISSING_FRACTION_PER_TICK = 0.3; // 25% of missing health per tick
 
 // Minimal character -> maxHealth mapping (keep in sync with client stats)
 function getMaxHealthForCharacter(character) {
   const key = String(character || "").toLowerCase();
   if (key === "thorg") return 12000;
-  // default ninja and others
+  if (key === "draven") return 12000;
+  // default ninja, wizard, and others
   return 8000;
+}
+
+// Initialize health fields for all players in a game object
+function initGameHealth(gameObj) {
+  try {
+    for (const teamKey in gameObj) {
+      const team = gameObj[teamKey];
+      for (const idx in team) {
+        const p = team[idx];
+        const max = getMaxHealthForCharacter(p.character);
+        p.maxHealth = typeof p.maxHealth === "number" ? p.maxHealth : max;
+        p.currentHealth =
+          typeof p.currentHealth === "number" ? p.currentHealth : p.maxHealth;
+      }
+    }
+  } catch (e) {
+    // swallow
+  }
 }
 
 // Debug logging removed for production cleanliness
@@ -261,6 +280,9 @@ app.get("/matchmaking/:partyid", (req, res) => {
             setSpawnProperties(party1Players, "bottom");
             setSpawnProperties(party2Players, "top");
           }
+
+          // Initialize health for all players based on their chosen character
+          initGameHealth(games[gameId]);
 
           const map = parties[partyId][0]["map"];
           // Broadcast In Battle status to both parties' lobbies
@@ -488,8 +510,9 @@ io.on("connection", (socket) => {
         if (p.name === target) {
           // Initialize health if not present (backwards compatibility)
           if (typeof p.currentHealth !== "number") {
-            p.maxHealth = 8000;
-            p.currentHealth = 8000;
+            const max = getMaxHealthForCharacter(p.character);
+            p.maxHealth = max;
+            p.currentHealth = max;
           }
           p.currentHealth -= damage;
           if (p.currentHealth < 0) p.currentHealth = 0;
@@ -746,6 +769,9 @@ io.on("connection", (socket) => {
             setSpawnProperties(party2, "top");
           }
 
+          // Initialize health for all players based on their chosen character
+          initGameHealth(games[gameId]);
+
           const map = parties[data.partyId][0]["map"];
           // Broadcast In Battle status for direct start
           try {
@@ -843,7 +869,8 @@ setInterval(() => {
             p.currentHealth = p.maxHealth;
           }
           if (p.currentHealth <= 0 || p.currentHealth >= p.maxHealth) continue;
-          const lastAtk = typeof p.lastAttackAt === "number" ? p.lastAttackAt : 0;
+          const lastAtk =
+            typeof p.lastAttackAt === "number" ? p.lastAttackAt : 0;
           const lastHit = typeof p.lastHitAt === "number" ? p.lastHitAt : 0;
           // Must satisfy both idle windows: 3s since last attack, 4s since last hit
           if (now - lastAtk < REGEN_IDLE_DELAY_MS) continue;

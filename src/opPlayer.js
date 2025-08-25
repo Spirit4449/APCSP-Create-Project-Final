@@ -2,7 +2,12 @@
 
 import { base, platform } from "./maps/lushyPeaks";
 import { calculateSpawn, calculateMangroveSpawn } from "./player";
-import { getTextureKey, resolveAnimKey, getStats } from "./characters";
+import {
+  getTextureKey,
+  resolveAnimKey,
+  getStats,
+  getEffectsClass,
+} from "./characters";
 import socket from "./socket";
 
 export default class OpPlayer {
@@ -29,6 +34,7 @@ export default class OpPlayer {
     this.opCurrentHealth = 8000;
     this.opHealthBarWidth = 60;
     this.movementTween = null; // Store reference to current movement tween
+    this.effects = null; // per-opponent effects (e.g., Draven fire)
     this.createOpPlayer();
   }
 
@@ -64,6 +70,13 @@ export default class OpPlayer {
       this.opFrame.width - heightShrink
     );
     this.applyFlipOffset();
+
+    // Per-character effects: instantiate if available for this character
+    const EffectsCls = getEffectsClass(this.character);
+    if (EffectsCls) {
+      this.effects = new EffectsCls(this.scene, this.opponent);
+      this.scene.events.on("update", this._onSceneUpdate, this);
+    }
 
     // Sets spawns
     if (this.spawnPlatform === "bottom") {
@@ -120,11 +133,28 @@ export default class OpPlayer {
         if (this.opCurrentHealth <= 0) {
           this.opCurrentHealth = 0;
           this.updateHealthBar(true); // show dead styling & 0
+          // Stop effects if any
+          if (this.effects) {
+            // no explicit destroy needed, just stop updating
+            this.scene.events.off("update", this._onSceneUpdate, this);
+            this.effects = null;
+          }
         } else {
           this.updateHealthBar();
         }
       }
     });
+  }
+
+  _onSceneUpdate() {
+    if (this.effects && this.opponent) {
+      // Determine simple moving state: horizontal velocity or recent tweening
+      const moving =
+        (this.opponent.body && Math.abs(this.opponent.body.velocity.x) > 5) ||
+        !!this.movementTween;
+      const isDead = this.opCurrentHealth <= 0;
+      this.effects.update(this.scene.game.loop.delta, moving, isDead);
+    }
   }
 
   // Adjust body offset depending on facing; uses optional flipOffset from body config
@@ -153,7 +183,7 @@ export default class OpPlayer {
     this.updateHealthBar(false);
   }
 
-  updateHealthBar(dead = false, healthBarY = 0) {
+  updateHealthBar(dead = false, healthBarY) {
     if (this.opCurrentHealth < 0) {
       // Prevents health from going negative
       this.opCurrentHealth = 0;
@@ -170,24 +200,27 @@ export default class OpPlayer {
 
     // Sets x in the center
     const healthBarX = this.opponent.x - this.opHealthBarWidth / 2;
-    // If player is dead, sets the y value lower
+    // If no explicit Y provided, anchor to the sprite's body top so it doesn't jump
     const bodyTop = this.opponent.body
       ? this.opponent.body.y
       : this.opponent.y - this.opponent.height / 2;
+    const y =
+      typeof healthBarY === "number" && !Number.isNaN(healthBarY)
+        ? healthBarY
+        : bodyTop - 15;
     if (dead === false) {
-      healthBarY = bodyTop - 15;
       this.opHealthText.setText(`${this.opCurrentHealth}`);
     } else {
       this.opHealthText.setText(`0`);
     }
     this.opHealthBar.fillStyle(0x595959);
-    this.opHealthBar.fillRect(healthBarX, healthBarY, this.opHealthBarWidth, 9);
+    this.opHealthBar.fillRect(healthBarX, y, this.opHealthBarWidth, 9);
 
     // Creates a black border around healthbar
     this.opHealthBar.lineStyle(3, 0x000000);
     this.opHealthBar.strokeRoundedRect(
       healthBarX,
-      healthBarY,
+      y,
       this.opHealthBarWidth,
       9,
       3
@@ -198,17 +231,11 @@ export default class OpPlayer {
     } else {
       this.opHealthBar.fillStyle(0xbb5c39); // red color for op team
     }
-    this.opHealthBar.fillRoundedRect(
-      healthBarX,
-      healthBarY,
-      displayedWidth,
-      9,
-      3
-    );
+    this.opHealthBar.fillRoundedRect(healthBarX, y, displayedWidth, 9, 3);
 
     this.opHealthText.setPosition(
       this.opponent.x - this.opHealthText.width / 2,
-      healthBarY - 8
+      y - 8
     );
     this.opHealthText.setDepth(2);
   }
@@ -218,6 +245,10 @@ export default class OpPlayer {
     if (this.movementTween) {
       this.movementTween.remove();
       this.movementTween = null;
+    }
+    if (this.effects) {
+      this.scene.events.off("update", this._onSceneUpdate, this);
+      this.effects = null;
     }
     if (this.opponent) {
       this.opponent.destroy();
