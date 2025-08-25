@@ -169,6 +169,7 @@ class Thorg {
       ammoCooldownMs: 100,
       ammoReloadMs: 1600,
       ammoCapacity: 2,
+      damage: 1600,
       spriteScale: 0.7,
       body: {
         widthShrink: 30,
@@ -201,8 +202,8 @@ class Thorg {
     this.scene.input.on("pointerdown", () => this.handlePointerDown());
   }
 
-  handlePointerDown() {
-    const p = this.player;
+  // Common default behavior for firing attacks
+  performDefaultAttack(payloadBuilder, onAfterFire) {
     const {
       getAmmoCooldownMs,
       tryConsume,
@@ -211,85 +212,92 @@ class Thorg {
       drawAmmoBar,
     } = this.ammo;
 
-    if (!tryConsume()) return;
+    if (!tryConsume()) return false;
     setIsAttacking(true);
     setCanAttack(false);
 
+    const cooldown = getAmmoCooldownMs();
+    this.scene.time.delayedCall(cooldown, () => setCanAttack(true));
+    setTimeout(() => setIsAttacking(false), 250);
+
+    const payload =
+      typeof payloadBuilder === "function" ? payloadBuilder() : null;
+    if (payload) socket.emit("attack", payload);
+    drawAmmoBar();
+    if (typeof onAfterFire === "function") onAfterFire();
+    return true;
+  }
+
+  handlePointerDown() {
+    const p = this.player;
     const direction = p.flipX ? -1 : 1;
     const range = 90;
     const duration = 220; // ms
-    const damage = 1600;
+    const stats =
+      (this.constructor.getStats && this.constructor.getStats()) || {};
+    const damage = stats.damage;
 
-    // Play slash-ish animation (reuse throw if no dedicated one)
-    if (
-      this.scene.anims &&
-      (this.scene.anims.exists(`${NAME}-throw`) ||
-        this.scene.anims.exists("throw"))
-    ) {
-      p.anims.play(
-        this.scene.anims.exists(`${NAME}-throw`) ? `${NAME}-throw` : "throw",
-        true
-      );
-    }
+    // Character-specific execution wrapped by default attack flow
+    return this.performDefaultAttack(() => {
+      // Play a suitable animation
+      if (
+        this.scene.anims &&
+        (this.scene.anims.exists(`${NAME}-throw`) ||
+          this.scene.anims.exists("throw"))
+      ) {
+        p.anims.play(
+          this.scene.anims.exists(`${NAME}-throw`) ? `${NAME}-throw` : "throw",
+          true
+        );
+      }
 
-    // Visual effect for local player
-    Thorg._spawnSlashEffect(this.scene, p, direction, range, duration);
+      // Local visual effect
+      Thorg._spawnSlashEffect(this.scene, p, direction, range, duration);
 
-    // Owner-side hit detection (single hit per target per swing)
-    const alreadyHit = new Set();
-    const enemies = Object.values(this.opponentPlayersRef || {});
-    const centerOffsetY = p.height * 0.2;
-    const cx = () => p.x + (direction >= 0 ? 10 : -10);
-    const cy = () => p.y - centerOffsetY;
-    const startRad = Phaser.Math.DegToRad(direction >= 0 ? -60 : 240);
-    const endRad = Phaser.Math.DegToRad(direction >= 0 ? 60 : 120);
-    const proxy = { t: 0 };
-    this.scene.tweens.add({
-      targets: proxy,
-      t: 1,
-      duration,
-      ease: "Sine.easeOut",
-      onUpdate: () => {
-        const cur = Phaser.Math.Linear(startRad, endRad, proxy.t);
-        // check hits around the moving slash center (approx)
-        const tipX = cx() + direction * Math.cos(cur) * range;
-        const tipY = cy() + Math.sin(cur) * Math.round(range * 0.6);
-        for (const wrap of enemies) {
-          const spr = wrap && wrap.opponent;
-          const name = wrap && wrap.username;
-          if (!spr || !name || alreadyHit.has(name)) continue;
-          // simple distance check to tip + also ensure general front side
-          const dx = spr.x - cx();
-          const dy = spr.y - cy();
-          const dist = Math.hypot(spr.x - tipX, spr.y - tipY);
-          if (dist <= 38 && Math.sign(dx) === Math.sign(direction)) {
-            alreadyHit.add(name);
-            socket.emit("hit", {
-              attacker: this.username,
-              target: name,
-              damage,
-              gameId: this.gameId,
-            });
+      // Owner-side hit detection
+      const alreadyHit = new Set();
+      const enemies = Object.values(this.opponentPlayersRef || {});
+      const centerOffsetY = p.height * 0.2;
+      const cx = () => p.x + (direction >= 0 ? 10 : -10);
+      const cy = () => p.y - centerOffsetY;
+      const startRad = Phaser.Math.DegToRad(direction >= 0 ? -60 : 240);
+      const endRad = Phaser.Math.DegToRad(direction >= 0 ? 60 : 120);
+      const proxy = { t: 0 };
+      this.scene.tweens.add({
+        targets: proxy,
+        t: 1,
+        duration,
+        ease: "Sine.easeOut",
+        onUpdate: () => {
+          const cur = Phaser.Math.Linear(startRad, endRad, proxy.t);
+          const tipX = cx() + direction * Math.cos(cur) * range;
+          const tipY = cy() + Math.sin(cur) * Math.round(range * 0.6);
+          for (const wrap of enemies) {
+            const spr = wrap && wrap.opponent;
+            const name = wrap && wrap.username;
+            if (!spr || !name || alreadyHit.has(name)) continue;
+            const dx = spr.x - cx();
+            const dist = Math.hypot(spr.x - tipX, spr.y - tipY);
+            if (dist <= 38 && Math.sign(dx) === Math.sign(direction)) {
+              alreadyHit.add(name);
+              socket.emit("hit", {
+                attacker: this.username,
+                target: name,
+                damage,
+                gameId: this.gameId,
+              });
+            }
           }
-        }
-      },
-    });
+        },
+      });
 
-    // Re-enable attack once per-shot cooldown elapses
-    const cooldown = getAmmoCooldownMs();
-    this.scene.time.delayedCall(cooldown, () => setCanAttack(true));
-
-    setTimeout(() => setIsAttacking(false), 250);
-
-    drawAmmoBar();
-
-    // Broadcast to others to render the effect
-    socket.emit("attack", {
-      name: this.username,
-      type: `${NAME}-slash`,
-      direction,
-      range,
-      duration,
+      return {
+        name: this.username,
+        type: `${NAME}-slash`,
+        direction,
+        range,
+        duration,
+      };
     });
   }
 }

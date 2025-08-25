@@ -39,6 +39,7 @@ class Ninja {
       ammoCooldownMs: 200,
       ammoReloadMs: 1400,
       ammoCapacity: 1, // three-segment ammo bar
+      damage: 1000,
       spriteScale: 1,
       body: {
         widthShrink: 35,
@@ -109,90 +110,111 @@ class Ninja {
     this.scene.input.on("pointerdown", () => this.handlePointerDown());
   }
 
-  handlePointerDown() {
-    const p = this.player;
+  // Generic/default attack flow: ammo checks, flags, UI, socket emit
+  performDefaultAttack(payloadBuilder, onAfterFire) {
     const {
-      getAmmoCapacity,
       getAmmoCooldownMs,
       tryConsume,
-      grantCharge,
       setCanAttack,
       setIsAttacking,
       drawAmmoBar,
     } = this.ammo;
 
-    // Try to consume a charge and respect cooldown/attack gating
-    if (!tryConsume()) return;
+    if (!tryConsume()) return false;
     setCanAttack(false);
     setIsAttacking(true);
 
-    // Re-enable attack once per-shot cooldown elapses
     const cooldown = getAmmoCooldownMs();
     this.scene.time.delayedCall(cooldown, () => setCanAttack(true));
-
+    // Reset attacking state a bit after shot
     setTimeout(() => setIsAttacking(false), 300);
 
-    const sfx = this.scene.sound.add("shurikenThrow");
-    sfx.setVolume(0.1);
-    sfx.setRate(1.3);
-    sfx.play();
+    // Build and broadcast attack payload
+    const payload =
+      typeof payloadBuilder === "function" ? payloadBuilder() : null;
+    if (payload) socket.emit("attack", payload);
 
-    p.anims.play(
-      this.scene.anims && this.scene.anims.exists(`${NAME}-throw`)
-        ? `${NAME}-throw`
-        : "throw",
-      true
-    );
+    // Update UI
+    drawAmmoBar();
+    if (typeof onAfterFire === "function") onAfterFire();
+    return true;
+  }
+
+  // Ninja-specific attack: spawn a returning shuriken with owner-side collisions
+  handlePointerDown() {
+    const p = this.player;
     const direction = p.flipX ? -1 : 1;
-    const config = {
-      direction,
-      username: this.username,
-      gameId: this.gameId,
-      isOwner: true,
-      damage: 1000,
-      rotationSpeed: 2000,
-      forwardDistance: 500,
-      arcHeight: 160,
-      outwardDuration: 380,
-      returnSpeed: 900,
-    };
 
-    const returning = new ReturningShuriken(
-      this.scene,
-      { x: p.x, y: p.y },
-      p,
-      config
-    );
+    const stats =
+      (this.constructor.getStats && this.constructor.getStats()) || {};
+    const damage = stats.damage;
 
-    // Ninja perk: instantly grant one ammo charge when the shuriken returns
-    returning.onReturn = () => {
-      grantCharge(1);
-      setCanAttack(true); // allow immediate shot after return
-      drawAmmoBar();
-    };
+    const fired = this.performDefaultAttack(() => {
+      // Play throw anim and sfx
+      const sfx = this.scene.sound.add("shurikenThrow");
+      sfx.setVolume(0.1);
+      sfx.setRate(1.3);
+      sfx.play();
+      if (
+        this.scene.anims &&
+        (this.scene.anims.exists(`${NAME}-throw`) ||
+          this.scene.anims.exists("throw"))
+      ) {
+        p.anims.play(
+          this.scene.anims.exists(`${NAME}-throw`) ? `${NAME}-throw` : "throw",
+          true
+        );
+      }
 
-    const enemyList = [];
-    const wrap = this.opponentPlayersRef || {};
-    for (const k in wrap) enemyList.push(wrap[k]);
-    returning.attachEnemyOverlap(enemyList);
-    returning.attachMapOverlap(this.mapObjects);
+      const config = {
+        direction,
+        username: this.username,
+        gameId: this.gameId,
+        isOwner: true,
+        damage,
+        rotationSpeed: 2000,
+        forwardDistance: 500,
+        arcHeight: 160,
+        outwardDuration: 380,
+        returnSpeed: 900,
+      };
 
-    socket.emit("attack", {
-      x: p.x,
-      y: p.y,
-      scale: config.scale || 0.1,
-      damage: config.damage,
-      name: this.username,
-      returning: true,
-      direction,
-      forwardDistance: config.forwardDistance,
-      outwardDuration: config.outwardDuration,
-      returnSpeed: config.returnSpeed,
-      rotationSpeed: config.rotationSpeed,
+      const returning = new ReturningShuriken(
+        this.scene,
+        { x: p.x, y: p.y },
+        p,
+        config
+      );
+
+      // Owner-only collisions
+      const enemyList = Object.values(this.opponentPlayersRef || {});
+      returning.attachEnemyOverlap(enemyList);
+      returning.attachMapOverlap(this.mapObjects);
+
+      // Perk: grant ammo on return
+      const { grantCharge, setCanAttack, drawAmmoBar } = this.ammo;
+      returning.onReturn = () => {
+        grantCharge(1);
+        setCanAttack(true);
+        drawAmmoBar();
+      };
+
+      return {
+        x: p.x,
+        y: p.y,
+        scale: config.scale || 0.1,
+        damage: config.damage,
+        name: this.username,
+        returning: true,
+        direction,
+        forwardDistance: config.forwardDistance,
+        outwardDuration: config.outwardDuration,
+        returnSpeed: config.returnSpeed,
+        rotationSpeed: config.rotationSpeed,
+      };
     });
 
-    // draw UI after firing
-    drawAmmoBar();
+    return fired;
   }
 }
 

@@ -15,6 +15,7 @@ const defaultStats = {
   ammoCooldownMs: 1200,
   ammoCapacity: 1, // number of segments/charges in the ammo bar
   ammoReloadMs: 1200, // time to reload one ammo segment
+  damage: 1000, // default damage per attack (can be overridden per character)
   spriteScale: 1,
   body: {
     widthShrink: 35,
