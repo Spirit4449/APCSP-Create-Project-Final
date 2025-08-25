@@ -112,6 +112,8 @@ class GameScene extends Phaser.Scene {
 
   create() {
     cdbg();
+    // Ensure camera renders on whole pixels for crisp sprites
+    this.cameras?.main && (this.cameras.main.roundPixels = true);
     // Creates the map objects
     if (map === "1") {
       mapObjects = lushyPeaksObjects;
@@ -317,6 +319,9 @@ class GameScene extends Phaser.Scene {
 
         // Update flip and animation immediately (these don't need tweening)
         opponentPlayer.opponent.flipX = data.flip;
+        if (typeof opponentPlayer.applyFlipOffset === "function") {
+          opponentPlayer.applyFlipOffset();
+        }
         opponentPlayer.opponent.anims.play(
           resolveAnimKey(
             this,
@@ -328,9 +333,12 @@ class GameScene extends Phaser.Scene {
         );
 
         // Update name tag position
+        const bodyTop = opponentPlayer.opponent.body
+          ? opponentPlayer.opponent.body.y
+          : opponentPlayer.opponent.y - opponentPlayer.opponent.height / 2;
         opponentPlayer.opPlayerName.setPosition(
           opponentPlayer.opponent.x,
-          opponentPlayer.opponent.y - opponentPlayer.opponent.height + 10
+          bodyTop - 20
         );
 
         // Remote running dust (approximate: if moved horizontally enough)
@@ -571,7 +579,14 @@ class GameScene extends Phaser.Scene {
 
         // Orientation/animation: take from newer if present
         const animSrc = bState && bState.animation ? bState : aState;
+        const prevFlip = spr.flipX;
         spr.flipX = !!animSrc.flip;
+        if (
+          spr.flipX !== prevFlip &&
+          typeof wrapper.applyFlipOffset === "function"
+        ) {
+          wrapper.applyFlipOffset();
+        }
         if (animSrc.animation) {
           spr.anims.play(
             resolveAnimKey(this, wrapper.character, animSrc.animation, "idle"),
@@ -580,7 +595,8 @@ class GameScene extends Phaser.Scene {
         }
 
         // Name tag
-        wrapper.opPlayerName.setPosition(spr.x, spr.y - spr.height + 10);
+        const bodyTop = spr.body ? spr.body.y : spr.y - spr.height / 2;
+        wrapper.opPlayerName.setPosition(spr.x, bodyTop - 20);
       };
 
       for (const name in opponentPlayers)
@@ -603,14 +619,17 @@ class GameScene extends Phaser.Scene {
 
 const config = {
   type: Phaser.AUTO,
-  antialias: true,
+  // Pixel-art friendly settings
+  pixelArt: true,
+  roundPixels: true,
+  antialias: false,
   resolution: window.devicePixelRatio,
   scale: {
     // Makes sure the game looks good on all screens
     mode: Phaser.Scale.FIT,
     autoCenter: Phaser.Scale.CENTER_BOTH,
-    width: "1300px",
-    height: "600px",
+    width: 1300,
+    height: 600,
   },
   scene: GameScene,
   physics: {

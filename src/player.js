@@ -76,6 +76,10 @@ let fireTrailInterval = 45; // ms
 let dustTimer = 0;
 const dustInterval = 70; // ms between dust puffs when running
 
+// Body config and flip-offset applier hoisted for use across functions
+let bodyConfig = null;
+let applyFlipOffsetLocal = null;
+
 // Create player function
 export function createPlayer(
   sceneParam,
@@ -105,6 +109,8 @@ export function createPlayer(
   const textureKey = getTextureKey(character);
   player = scene.physics.add.sprite(-100, -100, textureKey);
   player.anims.play(resolveAnimKey(scene, currentCharacter, "idle"), true); // Play idle animation
+  // Hide until we've configured frame/body and spawn to avoid a mid-air first render
+  player.setVisible(false);
   pdbg();
 
   // Apply character stats (health, ammo, sprite/body sizing)
@@ -120,6 +126,26 @@ export function createPlayer(
   if (stats.spriteScale && stats.spriteScale !== 1) {
     player.setScale(stats.spriteScale);
   }
+
+  // Establish frame/body sizing BEFORE computing spawn so height math is correct
+  frame = player.frame;
+  const bs = (stats && stats.body) || {};
+  bodyConfig = bs; // persist for use in movement function
+  const widthShrink = bs.widthShrink ?? 35;
+  const heightShrink = bs.heightShrink ?? 10;
+  player.body.setSize(frame.width - widthShrink, frame.width - heightShrink);
+  // Helper to adjust body offset when flipping
+  applyFlipOffsetLocal = () => {
+    if (!player || !player.body) return;
+    const cfg = bodyConfig || {};
+    const flipOffset = cfg.flipOffset || 0; // falsy -> 0
+    const extra = player.flipX ? flipOffset : 0;
+    player.body.setOffset(
+      player.body.width / 2 + (cfg.offsetXFromHalf ?? 0) + extra,
+      cfg.offsetY ?? 10
+    );
+  };
+  applyFlipOffsetLocal();
 
   // Listener to detect if player leaves the world bounds
   scene.events.on("update", () => {
@@ -161,23 +187,14 @@ export function createPlayer(
     }
   }
 
-  // Changes size of player frame so it can't clip. There are some issues where the frame changes to fit the animation size so this must be done to prevent that.
-  frame = player.frame;
-  const bs = (stats && stats.body) || {};
-  const widthShrink = bs.widthShrink ?? 35;
-  const heightShrink = bs.heightShrink ?? 10;
-  player.body.setSize(frame.width - widthShrink, frame.width - heightShrink);
-  player.body.setOffset(
-    player.body.width / 2 + (bs.offsetXFromHalf ?? 0),
-    bs.offsetY ?? 10
-  );
+  // Now that position is finalized, reveal the sprite for the first grounded render
+  player.setVisible(true);
 
-  // Player name text
-  playerName = scene.add.text(
-    player.x,
-    player.y - player.height + 10,
-    username
-  );
+  // Frame/body already configured above prior to spawn for correct initial grounding
+
+  // Player name text anchored to physics body top (not frame height)
+  const bodyTop = player.body ? player.body.y : player.y - player.height / 2;
+  playerName = scene.add.text(player.x, bodyTop - 50, username);
   playerName.setStyle({
     font: "bold 8pt Arial",
     fill: "#000000",
@@ -202,13 +219,14 @@ export function createPlayer(
   // Triangle to show which one is the user. Dissapears when the player moves
   indicatorTriangle = scene.add.graphics();
 
+  // Arrow above the body top so it's consistent across different frame paddings
   const triangle = new Phaser.Geom.Triangle(
     player.x,
-    player.y - 62, // Top point
+    bodyTop - 10, // Top point
     player.x - 13,
-    player.y - 72, // Left point
+    bodyTop - 20, // Left point
     player.x + 13,
-    player.y - 72 // Right point
+    bodyTop - 20 // Right point
   );
   indicatorTriangle.fillStyle(0x99ab2c); // Green color
   indicatorTriangle.fillTriangleShape(triangle);
@@ -274,8 +292,9 @@ function updateHealthBar() {
 
   const healthBarX = player.x - healthBarWidth / 2;
   let healthBarY;
+  const bodyTop = player.body ? player.body.y : player.y - player.height / 2;
   if (!dead) {
-    healthBarY = player.y - (player.height / 2 + 8); // shift up slightly to make space for ammo bar
+    healthBarY = bodyTop - 20; // just above body
     healthText.setText(`${currentHealth}`);
   } else {
     healthBarY = player.y - (player.height / 2 - 24);
@@ -306,8 +325,8 @@ function updateHealthBar() {
 function drawAmmoBar(forcedX, forcedY) {
   if (!ammoBar || !ammoBarBack) return;
   const x = forcedX !== undefined ? forcedX : player.x - ammoBarWidth / 2;
-  const y =
-    forcedY !== undefined ? forcedY : player.y - (player.height / 2 + 8) + 11;
+  const bodyTop = player.body ? player.body.y : player.y - player.height / 2;
+  const y = forcedY !== undefined ? forcedY : bodyTop - 9; // just under health bar
   ammoBarBack.clear();
   ammoBar.clear();
 
@@ -406,7 +425,10 @@ export function handlePlayerMovement(scene) {
       indicatorTriangle.clear(); // Removes indicator triangle if the player has moved
     }
     player.setVelocityX(-speed); // Sets velocity to negative so that it moves left
+    const wasFlip = player.flipX;
     player.flipX = true; // Mirrors the body of the player
+    if (player.flipX !== wasFlip && applyFlipOffsetLocal)
+      applyFlipOffsetLocal();
     isMoving = true; // Sets the isMoving to true
     if (player.body.touching.down && !isAttacking && !dead) {
       // If the player is not in the air or attacking or dead, it plays the running animation
@@ -426,7 +448,10 @@ export function handlePlayerMovement(scene) {
     if (indicatorTriangle) {
       indicatorTriangle.clear(); // Removes indicator triangle if the player has moved
     }
+    const wasFlip = player.flipX;
     player.flipX = false; // Undos the mirror of the player
+    if (player.flipX !== wasFlip && applyFlipOffsetLocal)
+      applyFlipOffsetLocal();
     player.setVelocityX(speed); // Sets velocity torwards right
     isMoving = true; // Sets moving variable
     if (player.body.touching.down && !isAttacking && !dead) {
@@ -492,7 +517,9 @@ export function handlePlayerMovement(scene) {
   }
 
   updateHealthBar(); // Updates the health bar after the new player position
-  playerName.setPosition(player.x, player.y - player.height + 10); // Updates the player nametag with the new position
+  // Keep name anchored to body top regardless of frame padding
+  const uiTop = player.body ? player.body.y : player.y - player.height / 2;
+  playerName.setPosition(player.x, uiTop - 22);
 
   // Landing detection (transition airborne -> grounded)
   const onGround = player.body.touching.down;

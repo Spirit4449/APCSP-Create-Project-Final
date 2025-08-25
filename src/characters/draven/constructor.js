@@ -18,6 +18,19 @@ class draven {
       `${staticPath}/${NAME}/spritesheet.png`,
       `${staticPath}/${NAME}/animations.json`
     );
+    // Ensure nearest-neighbor sampling for crisp pixel art
+    scene.load.on(Phaser.Loader.Events.COMPLETE, () => {
+      const tex = scene.textures.get(NAME);
+      if (tex && tex.source && tex.source[0] && tex.source[0].glTexture) {
+        // WebGL path: set filter to NEAREST
+        tex.setFilter(Phaser.Textures.FilterMode.NEAREST);
+      }
+      // Also set global default for this scene's game (Phaser 3.70)
+      if (scene.game && scene.game.config) {
+        scene.game.config.pixelArt = true;
+        scene.game.config.antialias = false;
+      }
+    });
   }
 
   static setupAnimations(scene) {
@@ -40,7 +53,8 @@ class draven {
         heightShrink: 195,
         offsetXFromHalf: 90,
         offsetY: 113,
-        flipShiftRightPx: 10,
+        // Shift body to the right when facing left to cover staff
+        flipOffset: 5,
       },
     };
   }

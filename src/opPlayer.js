@@ -36,7 +36,10 @@ export default class OpPlayer {
     // Creates the sprite
     const textureKey = getTextureKey(this.character);
     this.opponent = this.scene.physics.add.sprite(-100, -100, textureKey);
+    // Avoid first-frame pop: hide until frame/body configured and spawn applied
+    this.opponent.setVisible(false);
     const stats = getStats(this.character);
+    this.bodyConfig = (stats && stats.body) || {};
     // Apply per-character max health for correct bar scaling
     if (stats && typeof stats.maxHealth === "number") {
       this.opMaxHealth = stats.maxHealth;
@@ -50,6 +53,17 @@ export default class OpPlayer {
       resolveAnimKey(this.scene, this.character, "idle"),
       true
     );
+
+    // Configure frame/body BEFORE computing spawn for correct initial grounding
+    this.opFrame = this.opponent.frame;
+    const bs = this.bodyConfig;
+    const widthShrink = bs.widthShrink ?? 35;
+    const heightShrink = bs.heightShrink ?? 10;
+    this.opponent.body.setSize(
+      this.opFrame.width - widthShrink,
+      this.opFrame.width - heightShrink
+    );
+    this.applyFlipOffset();
 
     // Sets spawns
     if (this.spawnPlatform === "bottom") {
@@ -66,24 +80,16 @@ export default class OpPlayer {
       }
     }
 
-    // Changes frame size to prevent wall clipping
-    this.opFrame = this.opponent.frame;
-    const bs = (stats && stats.body) || {};
-    const widthShrink = bs.widthShrink ?? 35;
-    const heightShrink = bs.heightShrink ?? 10;
-    this.opponent.body.setSize(
-      this.opFrame.width - widthShrink,
-      this.opFrame.width - heightShrink
-    );
-    this.opponent.body.setOffset(
-      this.opponent.body.width / 2 + (bs.offsetXFromHalf ?? 0),
-      bs.offsetY ?? 10
-    );
+    // Reveal only after position is finalized
+    this.opponent.setVisible(true);
 
     // Sets the text of the name to username
+    const bodyTop = this.opponent.body
+      ? this.opponent.body.y
+      : this.opponent.y - this.opponent.height / 2;
     this.opPlayerName = this.scene.add.text(
       this.opponent.x,
-      this.opponent.y - this.opponent.height + 10,
+      bodyTop - 20,
       this.username
     );
     this.opPlayerName.setStyle({
@@ -102,8 +108,9 @@ export default class OpPlayer {
 
     this.opHealthBar = this.scene.add.graphics();
 
-    // Initially updates health bar
+    // Initially updates health bar and name positioning
     this.updateHealthBar();
+    this.updateUIPosition();
 
     // Listen for health updates for this opponent
     socket.on("health-update", (data) => {
@@ -118,6 +125,32 @@ export default class OpPlayer {
         }
       }
     });
+  }
+
+  // Adjust body offset depending on facing; uses optional flipOffset from body config
+  applyFlipOffset() {
+    if (!this.opponent || !this.opponent.body) return;
+    const bs = this.bodyConfig || {};
+    const offsetXFromHalf = bs.offsetXFromHalf ?? 0;
+    const offsetY = bs.offsetY ?? 10;
+    const flipOffset = bs.flipOffset || 0; // falsy -> 0
+    const extra = this.opponent.flipX ? flipOffset : 0;
+    this.opponent.body.setOffset(
+      this.opponent.body.width / 2 + offsetXFromHalf + extra,
+      offsetY
+    );
+  }
+
+  // Public helper to sync UI positions immediately (used after teleports/initial position set)
+  updateUIPosition() {
+    if (!this.opponent) return;
+    const bodyTop = this.opponent.body
+      ? this.opponent.body.y
+      : this.opponent.y - this.opponent.height / 2;
+    if (this.opPlayerName) {
+      this.opPlayerName.setPosition(this.opponent.x, bodyTop - 20);
+    }
+    this.updateHealthBar(false);
   }
 
   updateHealthBar(dead = false, healthBarY = 0) {
@@ -138,12 +171,13 @@ export default class OpPlayer {
     // Sets x in the center
     const healthBarX = this.opponent.x - this.opHealthBarWidth / 2;
     // If player is dead, sets the y value lower
+    const bodyTop = this.opponent.body
+      ? this.opponent.body.y
+      : this.opponent.y - this.opponent.height / 2;
     if (dead === false) {
-      healthBarY = this.opponent.y - (this.opponent.height / 2 + 4);
+      healthBarY = bodyTop - 15;
       this.opHealthText.setText(`${this.opCurrentHealth}`);
     } else {
-      // Position lower when dead (same offset logic as local player)
-      healthBarY = this.opponent.y - (this.opponent.height / 2 - 24);
       this.opHealthText.setText(`0`);
     }
     this.opHealthBar.fillStyle(0x595959);
