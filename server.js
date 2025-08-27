@@ -1,6 +1,13 @@
 // server.js
 
-// Credits to https://www.programiz.com/javascript/examples/generate-random-strings for helping create random string code
+// File Imports
+const {
+  DEFAULT_CHARACTER,
+  CHARACTER_HEALTH,
+} = require("./src/lib/characterStats");
+
+// Database
+const { pool, runQuery } = require("./sql");
 
 // Setup server and requirements
 const express = require("express");
@@ -11,6 +18,9 @@ const app = express();
 const server = http.createServer(app);
 const io = socketIo(server);
 const port = 3002;
+
+// Cloning
+const cloneDeep = require("lodash.clonedeep");
 
 // Parsers
 const bodyParser = require("body-parser");
@@ -35,8 +45,7 @@ app.use(
 
 app.use(webpackHotMiddleware(compiler));
 
-const cloneDeep = require("lodash.clonedeep");
-
+// Serve files from dist
 app.use(express.static(path.join(__dirname, "dist")));
 
 // List of names
@@ -53,15 +62,6 @@ const REGEN_MIN_PER_TICK = 500; // minimum heal per tick when tapering
 const REGEN_FRIENDLY_STEP = 50; // quantize regen to multiples of 50
 const REGEN_MISSING_FRACTION_PER_TICK = 0.3; // 25% of missing health per tick
 
-// Minimal character -> maxHealth mapping (keep in sync with client stats)
-function getMaxHealthForCharacter(character) {
-  const key = String(character || "").toLowerCase();
-  if (key === "thorg") return 12000;
-  if (key === "draven") return 12000;
-  // default ninja, wizard, and others
-  return 8000;
-}
-
 // Initialize health fields for all players in a game object
 function initGameHealth(gameObj) {
   try {
@@ -69,7 +69,7 @@ function initGameHealth(gameObj) {
       const team = gameObj[teamKey];
       for (const idx in team) {
         const p = team[idx];
-        const max = getMaxHealthForCharacter(p.character);
+        const max = character.CHARACTER_HEALTH[p.character];
         p.maxHealth = typeof p.maxHealth === "number" ? p.maxHealth : max;
         p.currentHealth =
           typeof p.currentHealth === "number" ? p.currentHealth : p.maxHealth;
@@ -79,18 +79,6 @@ function initGameHealth(gameObj) {
     // swallow
   }
 }
-
-// Debug logging removed for production cleanliness
-
-// Default endpoint
-app.get("/", (req, res) => {
-  if (!req.cookies["name"]) {
-    // If no name cookie, redirect to welcome screen
-    res.redirect("/welcome");
-  } else {
-    res.sendFile(path.join(__dirname, "dist", "index.html"));
-  }
-});
 
 // Welcome screen
 app.get("/welcome", (req, res) => {
@@ -107,6 +95,81 @@ app.get("/cannotjoin", (req, res) => {
 
 app.get("/partynotfound", (req, res) => {
   res.sendFile(path.join(__dirname, "dist", "/Errors/partynotfound.html"));
+});
+app.get("/signed-out", (req, res) => {
+  res.sendFile(path.join(__dirname, "dist", "/Errors/signed-out.html"));
+});
+
+app.post("/status", async (req, res) => {
+  try {
+    let username = req.cookies?.name;
+    // If no cookie, create a guest user and set cookie
+    let created = false;
+    if (!username) {
+      username = "Guest" + randomString(5, true); // assign to the SAME variable
+      const expiresAt = new Date(Date.now() + 2 * 60 * 60 * 1000); // +2h
+
+      // Try to insert; handle rare name-collision by retrying once
+      try {
+        await runQuery(
+          "INSERT INTO users (name, char_class, status, health, expires_at) VALUES (?, ?, ?, ?, ?)",
+          [
+            username,
+            DEFAULT_CHARACTER,
+            "lobby",
+            CHARACTER_HEALTH[DEFAULT_CHARACTER],
+            expiresAt,
+          ]
+        );
+      } catch (e) {
+        console.log("Error inserting user:", e);
+        return res.status(500).json({ message: "Error inserting user" });
+      }
+
+      // set cookie on THIS response
+      res.cookie("name", username, {
+        expires: expiresAt,
+        httpOnly: true,
+        sameSite: "lax",
+        secure: process.env.NODE_ENV === "production",
+      });
+      created = true;
+      console.log(`POST STATUS: Created new guest user ${username}`);
+    }
+
+    // Fetch user (guest just created, or existing registered)
+    const rows = await runQuery("SELECT * FROM users WHERE name = ?", [
+      username,
+    ]);
+    if (rows.length > 0) {
+      console.log(`POST STATUS: Retrieved user data for ${username}`);
+      const userData = rows[0];
+
+      // Fetch party memberships for this user
+      const party_id = await runQuery(
+        "SELECT party_id FROM party_members WHERE name = ?",
+        [username]
+      );
+
+      if (party_id.length > 0) {
+        console.log("User is in a party: ", party_id);
+      }
+
+      return res.status(created ? 201 : 200).json({
+        userData,
+        guest: userData.expires_at !== null,
+        newlyCreated: created,
+        party_id: party_id.length > 0 ? party_id[0].party_id : null,
+      });
+    } else {
+      // (Optional) if cookie exists but DB row missing/expired, recreate here
+      console.log(`POST STATUS: User ${username} not found`);
+      return res.status(404).json({ message: "User not found" });
+    }
+  } catch (error) {
+    console.error("Error in /status:", error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
 });
 
 // Game endpoint
@@ -510,7 +573,7 @@ io.on("connection", (socket) => {
         if (p.name === target) {
           // Initialize health if not present (backwards compatibility)
           if (typeof p.currentHealth !== "number") {
-            const max = getMaxHealthForCharacter(p.character);
+            const max = character.CHARACTER_HEALTH[p.character];
             p.maxHealth = max;
             p.currentHealth = max;
           }
@@ -863,7 +926,7 @@ setInterval(() => {
           if (!p || p.dead === true) continue;
           // Initialize health fields if missing
           if (typeof p.maxHealth !== "number") {
-            p.maxHealth = getMaxHealthForCharacter(p.character);
+            p.maxHealth = CHARACTER_HEALTH[p.character];
           }
           if (typeof p.currentHealth !== "number") {
             p.currentHealth = p.maxHealth;
@@ -902,14 +965,28 @@ setInterval(() => {
 }, REGEN_TICK_MS);
 
 // Start the server
-server.listen(port, () => {
-  console.log(`Server is listening at http://localhost:${port}`); // Sets up the server to listen on port 3000
-});
+async function startServer() {
+  try {
+    await pool.query("SELECT 1");
+    console.log("✅ Database connected");
+    server.listen(port, () => {
+      console.log(`Server is listening at http://localhost:${port}`); // Sets up the server to listen on port 3000
+    });
+  } catch (error) {
+    console.error("❌ Failed to connect to the database:", error);
+    process.exit(1); // Exit the process with an error code
+  }
+}
+startServer();
 
 // Random string (see credits at the very top for thanks for this code)
-function randomString(length) {
-  const letters =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+function randomString(length, numbersOnly = false) {
+  let letters;
+  if (numbersOnly) {
+    letters = "0123456789";
+  } else {
+    letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  }
   let string = "";
   const charactersLength = letters.length;
 

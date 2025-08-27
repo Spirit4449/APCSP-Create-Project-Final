@@ -2,27 +2,12 @@
 import Ninja from "./ninja/constructor";
 import Thorg from "./thorg/constructor";
 import Draven from "./draven/constructor";
+import { characterStats } from "../lib/characterStats.js";
 
 const registry = {
   ninja: Ninja,
   thorg: Thorg,
   draven: Draven,
-};
-
-// Default character stats. Individual characters can override any of these
-const defaultStats = {
-  maxHealth: 8000,
-  ammoCooldownMs: 1200,
-  ammoCapacity: 1, // number of segments/charges in the ammo bar
-  ammoReloadMs: 1200, // time to reload one ammo segment
-  damage: 1000, // default damage per attack (can be overridden per character)
-  spriteScale: 1,
-  body: {
-    widthShrink: 35,
-    heightShrink: 10,
-    offsetXFromHalf: 0, // additional x offset from half-width
-    offsetY: 10,
-  },
 };
 
 export function preloadAll(scene, staticPath) {
@@ -111,19 +96,9 @@ export function resolveAnimKey(
   return anims.exists(fallback) ? fallback : genericKey;
 }
 
-// Get merged stats for a character (defaults overlaid with character overrides)
+// Get merged stats for a character from centralized stats
 export function getStats(character) {
-  const Cls = registry[character];
-  const overrides =
-    Cls && (typeof Cls.getStats === "function" ? Cls.getStats() : Cls.stats);
-  return {
-    ...defaultStats,
-    ...(overrides || {}),
-    body: {
-      ...defaultStats.body,
-      ...((overrides && overrides.body) || {}),
-    },
-  };
+  return characterStats[character] || characterStats.ninja; // fallback to ninja if character not found
 }
 
 // Optional: returns the Effects class for a character, or null if none

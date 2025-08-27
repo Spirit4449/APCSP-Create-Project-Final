@@ -1,5 +1,6 @@
 // src/characters/thorg/thorg.js
 import socket from "../../socket";
+import { characterStats } from "../../lib/characterStats.js";
 import { animations } from "./anim";
 
 // Single source of truth for this character's name/key
@@ -164,20 +165,7 @@ class Thorg {
 
   // Per-character gameplay and presentation stats
   static getStats() {
-    return {
-      maxHealth: 12000,
-      ammoCooldownMs: 100,
-      ammoReloadMs: 1600,
-      ammoCapacity: 2,
-      damage: 1600,
-      spriteScale: 0.7,
-      body: {
-        widthShrink: 30,
-        heightShrink: 8,
-        offsetXFromHalf: -43,
-        offsetY: 8,
-      },
-    };
+    return characterStats.thorg;
   }
 
   constructor({

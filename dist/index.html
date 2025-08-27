@@ -1,39 +1,733 @@
-<!-- index.html -->
+<!-- party.html -->
 
 <!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link rel="shortcut icon" href="assets/sword.svg" type="image/x-icon" />
-    <title>Ultimate Punch Out</title>
+    <link rel="shortcut icon" href="/assets/sword.svg" type="image/x-icon" />
+    <title>Surge Battles</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Poppins:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&family=Press+Start+2P&display=swap"
+      rel="stylesheet"
+    />
     <script src="/socket.io/socket.io.js"></script>
-    <script>
-      // This code redirects you to party.html. It fetches the endpoint of the server and creates a party
-      fetch("/party-creation", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-      })
-        .then((response) => {
-          if (response.ok) {
-            return response.json();
-          } else {
-            console.error(`HTTP error! Status: ${response.status}`);
-          }
-        })
-        .then((data) => {
-          if (data && data.partyId) {
-            // Redirects to party
-            window.location = `/party/${data.partyId}`;
-          }
-        })
-        .catch((error) => {
-          // Handle errors
-          console.error("Fetch error:", error);
-        });
-    </script>
   </head>
-  <body></body>
+  <style>
+    body {
+      margin: 0;
+      background-image: url("/assets/bg2.jpg");
+      background-size: cover;
+      background-position: center;
+      background-repeat: no-repeat;
+      font-family: "Poppins", sans-serif;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    .flex {
+      display: flex;
+      align-items: center;
+    }
+    h2 {
+      margin-left: 10px;
+    }
+    h3 {
+      margin: 0;
+      font-weight: 200;
+    }
+
+    /* Fortnite-style navbar with gradient and glow */
+    #navbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      width: 100%;
+      top: 0;
+      height: 60px;
+      padding: 5px 20px;
+      box-sizing: border-box;
+      background: linear-gradient(
+        135deg,
+        rgba(17, 17, 48, 0.95),
+        rgba(8, 8, 16, 0.95)
+      );
+      color: white;
+      border-bottom: 3px solid #00d4ff;
+      box-shadow: 0 4px 20px rgba(0, 212, 255, 0.3);
+      z-index: 1000;
+      position: relative;
+    }
+
+    .button {
+      padding: 5px 10px;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+
+    #party {
+      height: 45px;
+      background: linear-gradient(135deg, #00d4ff, #0099cc);
+      border-radius: 8px;
+      padding: 0px 15px;
+      box-sizing: border-box;
+      color: white;
+      margin-left: 15px;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      border: 2px solid rgba(255, 255, 255, 0.3);
+      box-shadow: 0 4px 15px rgba(0, 212, 255, 0.4);
+      font-weight: 600;
+    }
+    #party:hover {
+      background: linear-gradient(135deg, #0099cc, #007399);
+      box-shadow: 0 6px 20px rgba(0, 212, 255, 0.6);
+      transform: translateY(-2px);
+    }
+
+    /* Lobby area with platforms */
+    #lobby-area {
+      position: relative;
+      width: 100%;
+      height: calc(100vh - 140px);
+      margin-top: 20px;
+    }
+
+    /* Platform styling - responsive and mode-based sizing */
+    .platform {
+      position: absolute;
+      /* Remove background image from container to avoid overlap with character slot */
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      gap: 0; /* ensure no space between children */
+      padding-top: 10px;
+      transition: all 0.3s ease;
+    }
+
+    /* Visual platform image placed as a separate element to stack vertically */
+    .platform-image {
+      width: 100%;
+      background-image: url("/assets/lobbyPlatform.png");
+      background-size: contain;
+      background-repeat: no-repeat;
+      background-position: center bottom;
+      pointer-events: none;
+      filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.35));
+    }
+
+    /* 1v1 Mode - Much larger platforms utilizing more space */
+    .mode-1 .platform {
+      width: min(35vw, 450px); /* Increased from 25vw, 300px */
+      height: min(25vh, 200px); /* Increased from 15vh, 100px */
+    }
+
+    .mode-1 .platform-image {
+      /* Never shrink too small; prefer viewport height but keep sensible bounds */
+      height: clamp(70px, 10vh, 120px);
+    }
+
+    .mode-1 .platform.your-team-1 {
+      left: 10%; /* Moved closer to center */
+      top: 40%; /* Adjusted to use more bottom space */
+      transform: translateY(-30%); /* Less centering to use bottom space */
+    }
+
+    .mode-1 .platform.op-team-1 {
+      right: 10%; /* Moved closer to center */
+      top: 40%; /* Adjusted to use more bottom space */
+      transform: translateY(-30%); /* Less centering to use bottom space */
+    }
+
+    /* 2v2 Mode - Medium platforms positioned diagonally, bigger */
+    .mode-2 .platform {
+      width: min(25vw, 350px); /* Increased from 18vw, 280px */
+      height: min(18vh, 150px); /* Increased from 10vh, 120px */
+    }
+
+    .mode-2 .platform-image {
+      height: clamp(60px, 8vh, 100px);
+    }
+
+    .mode-2 .platform.your-team-1 {
+      left: 5%; /* Moved out slightly for bigger platforms */
+      top: 25%; /* Adjusted to use more bottom space */
+    }
+
+    .mode-2 .platform.your-team-2 {
+      left: 15%; /* Adjusted spacing */
+      top: 50%; /* Moved down to use bottom space */
+    }
+
+    .mode-2 .platform.op-team-1 {
+      right: 5%; /* Moved out slightly for bigger platforms */
+      top: 25%; /* Adjusted to use more bottom space */
+    }
+
+    .mode-2 .platform.op-team-2 {
+      right: 15%; /* Adjusted spacing */
+      top: 50%; /* Moved down to use bottom space */
+    }
+
+    /* 3v3 Mode - Triangular formation with better spacing, bigger platforms */
+    .mode-3 .platform {
+      width: min(22vw, 320px);
+      height: min(18vh, 150px);
+    }
+
+    .mode-3 .platform-image {
+      height: clamp(70px, 9vh, 120px);
+    }
+
+    .mode-3 .platform.your-team-1 {
+      left: 3%; /* Slightly adjusted for bigger platforms */
+      top: 20%; /* Moved up to use more bottom space */
+    }
+
+    .mode-3 .platform.your-team-2 {
+      left: 12%; /* Adjusted spacing */
+      top: 40%; /* Adjusted positioning */
+    }
+
+    .mode-3 .platform.your-team-3 {
+      left: 21%; /* Adjusted spacing */
+      top: 60%; /* Moved down to use bottom space */
+    }
+
+    .mode-3 .platform.op-team-1 {
+      right: 3%; /* Slightly adjusted for bigger platforms */
+      top: 20%; /* Moved up to use more bottom space */
+    }
+
+    .mode-3 .platform.op-team-2 {
+      right: 12%; /* Adjusted spacing */
+      top: 40%; /* Adjusted positioning */
+    }
+
+    .mode-3 .platform.op-team-3 {
+      right: 21%; /* Adjusted spacing */
+      top: 60%; /* Moved down to use bottom space */
+    }
+
+    /* VS indicator in the center */
+    #vs-container {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 100;
+    }
+
+    #vs {
+      filter: drop-shadow(0 0 10px rgba(255, 255, 255, 0.8));
+    }
+
+    /* Character container on platforms - anchored so the character sits on the platform */
+    .character-slot {
+      position: relative;
+      width: min(8vw, 90px);
+      height: min(13vh, 130px);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-end; /* push content to bottom so sprite sits on platform */
+      cursor: pointer;
+      transition: all 0.2s ease;
+      margin-top: 0;
+      /* No gap between character and platform; status will overlap the seam */
+      margin-bottom: 0;
+      border-radius: 8px;
+      padding: 5px;
+      /* Ensure sprite stays at top regardless of platform size */
+      min-height: 80px;
+    }
+
+    .character-slot.player-display {
+      border: 2px solid #00d4ff;
+      border-radius: 8px;
+      background: linear-gradient(
+        135deg,
+        rgba(0, 212, 255, 0.15),
+        rgba(0, 153, 204, 0.15)
+      );
+      box-shadow: 0 0 15px rgba(0, 212, 255, 0.4);
+    }
+
+    .character-slot.op-display {
+      border: 2px solid #ff4757;
+      border-radius: 8px;
+      background: linear-gradient(
+        135deg,
+        rgba(255, 71, 87, 0.15),
+        rgba(220, 56, 56, 0.15)
+      );
+      box-shadow: 0 0 15px rgba(255, 71, 87, 0.4);
+    }
+
+    /* Character sprite - responsive sizing, anchored to bottom */
+    .character-sprite {
+      width: min(5vw, 70px);
+      height: min(7vw, 90px);
+      margin-top: auto; /* push sprite to bottom within the slot */
+      margin-bottom: 0;
+      filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.5));
+      object-fit: contain;
+      flex-shrink: 0; /* Prevent shrinking */
+    }
+
+    .switch-character {
+      position: absolute;
+      right: 2px;
+      top: 2px;
+      width: 20px;
+      height: 20px;
+      background-color: #a7e90e;
+      border-radius: 5px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: transform 0.2s ease;
+    }
+
+    /* Username above character - positioned relative to sprite at top */
+    .username {
+      position: absolute;
+      top: -25px; /* Positioned above the sprite */
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: min(1.2vw, 11px);
+      font-weight: 600;
+      color: white;
+      text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.8);
+      white-space: nowrap;
+      max-width: min(10vw, 100px);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      z-index: 10; /* Ensure it appears above platform */
+    }
+
+    .username.op-player {
+      color: #fff7f4;
+    }
+
+    /* Status indicator - overlaps seam between character and platform */
+    .status {
+      position: absolute;
+      bottom: -10px; /* Slight overlap into platform image */
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: min(1vw, 9px);
+      font-weight: 600;
+      padding: 1px 4px;
+      border-radius: 3px;
+      white-space: nowrap;
+      text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);
+      z-index: 50; /* Ensure it appears above platform */
+    }
+
+    .status.ready {
+      background: linear-gradient(135deg, #2ed573, #1e90ff);
+      color: white;
+    }
+
+    .status.not-ready {
+      background: linear-gradient(135deg, #ff4757, #ff3742);
+      color: white;
+    }
+
+    .status.invite {
+      background: linear-gradient(135deg, #ffa502, #ff6348);
+      color: white;
+      cursor: pointer;
+    }
+
+    /* Fortnite-style bottom UI */
+    #bottom-bar {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 70px;
+      background: linear-gradient(
+        135deg,
+        rgba(20, 20, 50, 0.3),
+        rgba(40, 40, 80, 0.3)
+      );
+      box-shadow: 0 -4px 20px rgba(0, 212, 255, 0.3);
+      backdrop-filter: blur(8px);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0 30px;
+      z-index: 1000;
+    }
+
+    /* Scope dropdown baseline styles to the bottom bar only */
+    #bottom-bar select.dropdown {
+      border-radius: 8px;
+      border: 2px solid rgba(255, 255, 255, 0.3);
+      padding: 12px 20px;
+      font-size: 16px;
+      font-weight: 600;
+      font-family: "Poppins", sans-serif;
+      cursor: pointer;
+      outline: none;
+      transition: all 0.3s ease;
+      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+      color: #ffffff;
+      /* Remove native arrow and add a consistent chevron */
+      -webkit-appearance: none;
+      -moz-appearance: none;
+      appearance: none;
+      background-repeat: no-repeat;
+      background-position: right 12px center;
+      background-size: 14px 14px;
+      padding-right: 42px; /* space for chevron */
+      color-scheme: dark; /* hint UA to use dark popups */
+    }
+
+    /* Custom chevron using an inline SVG (white) */
+    #bottom-bar #character,
+    #bottom-bar #mode,
+    #bottom-bar #map {
+      background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="%23ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>');
+    }
+
+    /* Improve readability in the native popup list */
+    #bottom-bar select.dropdown option {
+      background-color: rgba(18, 22, 40, 0.98);
+      color: #f5f7ff;
+    }
+    /* Selected option background tint per dropdown (best-effort; UA-dependent) */
+    #bottom-bar #character option:checked {
+      background-color: rgba(61, 129, 177, 0.85);
+    }
+    #bottom-bar #mode option:checked {
+      background-color: rgba(88, 178, 55, 0.85);
+    }
+    #bottom-bar #map option:checked {
+      background-color: rgba(206, 150, 53, 0.85);
+    }
+
+    /* Hide default arrow in legacy IE */
+    #bottom-bar select.dropdown::-ms-expand {
+      display: none;
+    }
+
+    /* Consistent focus ring behavior within the bottom bar */
+    #bottom-bar select.dropdown:focus {
+      border-color: rgba(255, 255, 255, 0.6);
+      box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.15),
+        0 4px 15px rgba(0, 0, 0, 0.3);
+    }
+
+    #bottom-bar #character {
+      background: linear-gradient(135deg, #4da1dc, #3d81b1);
+      color: white;
+    }
+    #bottom-bar #character:hover {
+      background: linear-gradient(135deg, #3d81b1, #2d6191);
+      box-shadow: 0 6px 20px rgba(77, 161, 220, 0.4);
+    }
+    #bottom-bar #character:focus {
+      border-color: #4da1dc;
+      box-shadow: 0 0 0 2px rgba(77, 161, 220, 0.35),
+        0 6px 20px rgba(77, 161, 220, 0.4);
+    }
+
+    #bottom-bar #mode {
+      background: linear-gradient(135deg, #49d15d, #58b237);
+      color: white;
+    }
+    #bottom-bar #mode:hover {
+      background: linear-gradient(135deg, #58b237, #48a227);
+      box-shadow: 0 6px 20px rgba(73, 209, 93, 0.4);
+    }
+    #bottom-bar #mode:focus {
+      border-color: #49d15d;
+      box-shadow: 0 0 0 2px rgba(73, 209, 93, 0.35),
+        0 6px 20px rgba(73, 209, 93, 0.4);
+    }
+
+    #bottom-bar #map {
+      background: linear-gradient(135deg, #ce9635, #9f9814);
+      color: rgb(255, 255, 255);
+    }
+    #bottom-bar #map:hover {
+      background: linear-gradient(135deg, #9f9814, #8f8804);
+      box-shadow: 0 6px 20px rgba(206, 150, 53, 0.4);
+    }
+    #bottom-bar #map:focus {
+      border-color: #ce9635;
+      box-shadow: 0 0 0 2px rgba(206, 150, 53, 0.35),
+        0 6px 20px rgba(206, 150, 53, 0.4);
+    }
+
+    .dropdown-group {
+      display: flex;
+      gap: 15px;
+    }
+
+    #ready {
+      background: linear-gradient(135deg, #eac809, #d4b000);
+      border-radius: 8px;
+      border: 2px solid rgba(255, 255, 255, 0.3);
+      padding: 13px 35px;
+      font-size: 18px;
+      font-weight: 700;
+      font-family: "Poppins", sans-serif;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      color: white;
+      text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.5);
+      box-shadow: 0 4px 15px rgba(234, 200, 9, 0.4);
+    }
+    #ready:hover {
+      background: linear-gradient(135deg, #d4b000, #c4a000);
+      box-shadow: 0 6px 20px rgba(234, 200, 9, 0.6);
+    }
+
+    .account {
+      height: 45px;
+      background: linear-gradient(135deg, #f0a665, #dc8f4b);
+      border-radius: 8px;
+      padding: 0px 15px;
+      box-sizing: border-box;
+      color: white;
+      margin-left: 10px;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      border: 2px solid rgba(255, 255, 255, 0.3);
+      box-shadow: 0 4px 15px rgba(240, 166, 101, 0.4);
+      font-weight: 600;
+    }
+    .account:hover {
+      background: linear-gradient(135deg, #dc8f4b, #c67f3b);
+      box-shadow: 0 6px 20px rgba(240, 166, 101, 0.6);
+      transform: translateY(-2px);
+    }
+
+    #create-party {
+      position: fixed;
+      top: 80px;
+      left: 20px;
+      background: linear-gradient(135deg, #6947ff, #8e35dc);
+      width: 100px;
+      height: 45px;
+      border-radius: 8px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      border: 2px solid rgba(255, 255, 255, 0.3);
+      cursor: pointer;
+      color: white;
+      font-weight: 600;
+      z-index: 1;
+      transition: all 0.3s ease;
+      box-shadow: 0 4px 15px rgba(255, 71, 87, 0.4);
+    }
+    #create-party:hover {
+      background: linear-gradient(135deg, #7356f7, #9e50e3);
+      box-shadow: 0 6px 20px rgba(255, 71, 87, 0.6);
+      transform: translateY(-2px);
+    }
+
+    /* Drag and drop visual feedback - less obnoxious */
+    .platform.drag-over {
+      filter: brightness(1.2) drop-shadow(0 0 10px #ffff00);
+    }
+
+    /* Empty slot styling - more subtle */
+    .character-slot.empty {
+      border: 2px dashed rgba(255, 255, 255, 0.4);
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    /* Party invite popup styling with higher z-index */
+    .party-popup {
+      position: absolute;
+      padding: 8px 12px;
+      color: white;
+      border-radius: 6px;
+      background: linear-gradient(135deg, #2f2f2f, #1f1f1f);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+      z-index: 10000;
+      font-size: 12px;
+      white-space: nowrap;
+      backdrop-filter: blur(10px);
+    }
+
+    #your-slot-1:hover {
+      background-color: #5a5a5a1c;
+    }
+    #your-slot-1:hover .switch-character {
+      transform: rotate(-10deg);
+    }
+
+    /* Responsive adjustments for smaller screens */
+    @media (max-width: 768px) {
+      .mode-1 .platform {
+        width: min(40vw, 300px);
+        height: min(20vh, 150px);
+      }
+
+      .mode-2 .platform {
+        width: min(30vw, 250px);
+        height: min(15vh, 120px);
+      }
+
+      .mode-2 .platform.your-team-2,
+      .mode-2 .platform.op-team-2 {
+        top: 55%;
+      }
+
+      .mode-3 .platform {
+        width: min(27vw, 220px);
+        height: min(14vh, 110px);
+      }
+
+      .mode-3 .platform.your-team-2,
+      .mode-3 .platform.op-team-2 {
+        top: 45%;
+      }
+
+      .mode-3 .platform.your-team-3,
+      .mode-3 .platform.op-team-3 {
+        top: 65%;
+      }
+
+      .character-slot {
+        width: min(12vw, 80px);
+        height: min(15vh, 100px);
+        min-height: 70px;
+        margin-bottom: 0;
+      }
+
+      .character-sprite {
+        width: min(8vw, 50px);
+        height: min(8vw, 50px);
+      }
+    }
+
+    @media (max-width: 480px) {
+      .mode-1 .platform {
+        width: min(45vw, 250px);
+        height: min(18vh, 120px);
+      }
+
+      .mode-2 .platform {
+        width: min(35vw, 200px);
+        height: min(14vh, 100px);
+      }
+
+      .mode-3 .platform {
+        width: min(32vw, 170px);
+        height: min(13vh, 90px);
+      }
+
+      .character-slot {
+        width: min(15vw, 70px);
+        height: min(18vh, 90px);
+        min-height: 60px;
+        margin-bottom: 0;
+      }
+
+      .character-sprite {
+        width: min(10vw, 40px);
+        height: min(10vw, 40px);
+      }
+
+      .username {
+        font-size: min(2vw, 10px);
+        top: -20px;
+      }
+
+      .status {
+        font-size: min(1.5vw, 8px);
+        bottom: -8px;
+      }
+    }
+  </style>
+  <body>
+    <div id="navbar">
+      <div class="flex">
+        <img src="/assets/sword.svg" width="20px" />
+        <h2>Surge Battles</h2>
+      </div>
+      <div class="flex" id="navbar-right">
+        <h3 id="username-text"></h3>
+        <div class="flex account" id="sign-out">Sign out</div>
+        <div class="flex account" id="login">Log in</div>
+      </div>
+    </div>
+
+    <button id="create-party">
+      <p>Create Party</p>
+    </button>
+
+    <!-- Main lobby area with platforms -->
+    <div id="lobby-area" class="mode-1">
+      <!-- Your team platforms -->
+      <div class="platform your-team-1" data-team="your-team" data-slot="1">
+        <div class="character-slot empty" id="your-slot-1">
+          <div class="switch-character">
+            <img src="/assets/switch.svg" height="18px" alt="" />
+          </div>
+          <div class="username">Random</div>
+          <img class="character-sprite random" id="sprite" alt="Random" />
+          <div class="status invite">Invite</div>
+        </div>
+        <div class="platform-image"></div>
+      </div>
+
+      <!-- VS indicator in center -->
+      <div id="vs-container">
+        <img src="/assets/vs.png" id="vs" alt="vs" width="100px" />
+      </div>
+
+      <!-- Opponent team platforms -->
+      <div class="platform op-team-1" data-team="op-team" data-slot="1">
+        <div class="character-slot empty" id="op-slot-1">
+          <div class="username op-player">Random</div>
+          <img
+            class="character-sprite random"
+            src="/assets/random.png"
+            alt="Random"
+          />
+          <div class="status invite">Invite</div>
+        </div>
+        <div class="platform-image"></div>
+      </div>
+    </div>
+
+    <!-- Bottom UI bar -->
+    <div id="bottom-bar">
+      <!-- <select id="character" name="character" class="dropdown">
+        <option value="ninja">Ninja</option>
+        <option value="thorg">Thorg</option>
+        <option value="draven">Draven</option>
+      </select> -->
+
+      <div class="dropdown-group">
+        <select id="mode" name="mode" class="dropdown">
+          <option value="1">1v1</option>
+          <option value="2">2v2</option>
+          <option value="3">3v3</option>
+        </select>
+        <select id="map" name="map" class="dropdown">
+          <option value="1">Lushy Peaks</option>
+          <option value="2">Mangrove Meadow</option>
+        </select>
+      </div>
+
+      <input type="submit" id="ready" value="Ready" />
+    </div>
+
+    <script src="/index.bundle.js"></script>
+  </body>
 </html>

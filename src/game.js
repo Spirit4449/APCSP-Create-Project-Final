@@ -1,5 +1,6 @@
 // game.js
 
+import { getCookie } from "./lib/cookies";
 import { lushyPeaks, lushyPeaksObjects } from "./maps/lushyPeaks";
 import { mangroveMeadow, mangroveMeadowObjects } from "./maps/mangroveMeadow";
 import { createPlayer, player, handlePlayerMovement, dead } from "./player";
@@ -665,19 +666,5 @@ const config = {
 };
 
 const game = new Phaser.Game(config);
-
-// Gets cookie value
-function getCookie(cookieName) {
-  const name = cookieName + "=";
-  const decodedCookie = decodeURIComponent(document.cookie);
-  const cookieArray = decodedCookie.split(";");
-  for (let i = 0; i < cookieArray.length; i++) {
-    let cookie = cookieArray[i].trim();
-    if (cookie.indexOf(name) === 0) {
-      return cookie.substring(name.length);
-    }
-  }
-  return "";
-}
 
 export { opponentPlayers, teamPlayers };

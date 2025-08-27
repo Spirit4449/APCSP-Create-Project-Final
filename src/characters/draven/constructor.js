@@ -1,5 +1,6 @@
 // src/characters/draven/draven.js
 import socket from "../../socket";
+import { characterStats } from "../../lib/characterStats.js";
 import { animations } from "./anim";
 import DravenEffects from "./effects";
 
@@ -45,22 +46,7 @@ class draven {
 
   // Per-character gameplay and presentation stats
   static getStats() {
-    return {
-      maxHealth: 12000,
-      ammoCooldownMs: 100,
-      ammoReloadMs: 1600,
-      ammoCapacity: 2,
-      damage: 1400,
-      spriteScale: 1.2,
-      body: {
-        widthShrink: 220,
-        heightShrink: 195,
-        offsetXFromHalf: 90,
-        offsetY: 113,
-        // Shift body to the right when facing left to cover staff
-        flipOffset: 5,
-      },
-    };
+    return characterStats.draven;
   }
 
   constructor({

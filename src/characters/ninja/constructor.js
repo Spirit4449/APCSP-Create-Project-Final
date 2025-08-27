@@ -1,5 +1,6 @@
-// src/characters/Ninja.js
+// src/characters/ninja/ninja.js
 import socket from "../../socket";
+import { characterStats } from "../../lib/characterStats.js";
 import ReturningShuriken from "./attack";
 import { animations } from "./anim";
 
@@ -34,20 +35,7 @@ class Ninja {
 
   // Per-character gameplay and presentation stats
   static getStats() {
-    return {
-      maxHealth: 8000,
-      ammoCooldownMs: 200,
-      ammoReloadMs: 1400,
-      ammoCapacity: 1, // three-segment ammo bar
-      damage: 1000,
-      spriteScale: 1,
-      body: {
-        widthShrink: 35,
-        heightShrink: 10,
-        offsetXFromHalf: 0,
-        offsetY: 10,
-      },
-    };
+    return characterStats.ninja;
   }
 
   // Handle remote attack events for opponents using this character

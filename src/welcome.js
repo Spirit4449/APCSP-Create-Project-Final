@@ -1,4 +1,5 @@
 // welcome.js
+import { createCookie } from "./lib/cookies";
 
 // Credits to https://www.w3schools.com/js/js_cookies.asp for helping with cookie code
 
@@ -53,11 +54,3 @@ document.addEventListener("DOMContentLoaded", function () {
     }
   }
 });
-
-function createCookie(cookieName, cookieValue) {
-  const date = new Date();
-  // Set expiration date to one month from now
-  date.setTime(date.getTime() + 30 * 24 * 60 * 60 * 1000);
-  const expires = "expires=" + date.toUTCString();
-  document.cookie = cookieName + "=" + cookieValue + ";" + expires + ";path=/";
-}
