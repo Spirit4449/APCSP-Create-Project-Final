@@ -3,7 +3,11 @@
 // File Imports
 const {
   DEFAULT_CHARACTER,
-  CHARACTER_HEALTH,
+  LEVEL_CAP,
+  defaultCharacterList,
+  getAllCharacters,
+  upgradePrice,
+  unlockPrice,
 } = require("./src/lib/characterStats");
 
 // Database
@@ -109,16 +113,21 @@ app.post("/status", async (req, res) => {
       username = "Guest" + randomString(5, true); // assign to the SAME variable
       const expiresAt = new Date(Date.now() + 2 * 60 * 60 * 1000); // +2h
 
+      // Gets the array of characters and creates a dictionary with each one having a level of 1
+      const charLevels = Object.fromEntries(
+        getAllCharacters().map((k) => [k, 1])
+      );
+
       // Try to insert; handle rare name-collision by retrying once
       try {
         await runQuery(
-          "INSERT INTO users (name, char_class, status, health, expires_at) VALUES (?, ?, ?, ?, ?)",
+          "INSERT INTO users (name, char_class, status, expires_at, char_levels) VALUES (?, ?, ?, ?, ?)",
           [
             username,
             DEFAULT_CHARACTER,
             "lobby",
-            CHARACTER_HEALTH[DEFAULT_CHARACTER],
             expiresAt,
+            JSON.stringify(defaultCharacterList()),
           ]
         );
       } catch (e) {
@@ -440,6 +449,205 @@ app.get("/party/:partyid", (req, res) => {
     return res.sendFile(
       path.join(__dirname, "dist", "/Errors/partynotfound.html")
     );
+  }
+});
+
+app.post("/upgrade", async (req, res) => {
+  try {
+    const username = req.cookies.name;
+    const character = req.body.character;
+
+    if (!username) {
+      return res.status(401).json({ error: "Not authenticated" });
+    }
+
+    // Validate inputs and test for sql injection
+    if (
+      typeof character !== "string" ||
+      !/^[a-zA-Z0-9_:-]{1,32}$/.test(character)
+    ) {
+      return res.status(400).json({ error: "Invalid character key" });
+    }
+
+    // Build a safe JSON path like $.character
+    const jsonPath = `$.${character}`;
+
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+
+      const [rows] = await conn.execute(
+        "SELECT coins, JSON_EXTRACT(char_levels, ?) AS lvl FROM users WHERE name = ? FOR UPDATE",
+        [jsonPath, username]
+      );
+      if (rows.length === 0) {
+        await conn.rollback();
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      const dbCoins = Number(rows[0].coins);
+      // JSON_EXTRACT returns JSON; handle null and cast
+      const dbLevel = rows[0].lvl == null ? 0 : Number(rows[0].lvl);
+
+      if (dbLevel >= LEVEL_CAP) {
+        await conn.rollback();
+        return res.status(409).json({ error: "Level cap reached" });
+      }
+
+      const price = upgradePrice(dbLevel); // compute on server from authoritative level
+      if (!Number.isFinite(price) || price < 0) {
+        await conn.rollback();
+        return res.status(500).json({ error: "Pricing error" });
+      }
+      if (dbCoins < price) {
+        await conn.rollback();
+        return res.status(403).json({ error: "Not enough coins" });
+      }
+
+      // Single guarded UPDATE:
+      //  - deduct coins
+      //  - set level to dbLevel + 1
+      //  - ensure user still has enough coins AND level didn't change since we read it
+      const [result] = await conn.execute(
+        `
+        UPDATE users
+        SET
+          coins = coins - ?,
+          char_levels = JSON_SET(char_levels, ?, ?)
+        WHERE name = ?
+          AND coins >= ?
+          AND COALESCE(JSON_EXTRACT(char_levels, ?), 0) = ?
+        `,
+        [price, jsonPath, dbLevel + 1, username, price, jsonPath, dbLevel]
+      );
+
+      if (result.affectedRows !== 1) {
+        // Someone else updated concurrently or funds changed
+        await conn.rollback();
+        return res.status(409).json({ error: "Upgrade conflict, retry" });
+      }
+
+      await conn.commit();
+      console.log(
+        `${username} upgrade ${character} to level ${
+          dbLevel + 1
+        } for ${price} coins`
+      );
+      return res
+        .status(200)
+        .json({ success: true, newLevel: dbLevel + 1, spent: price });
+    } catch (e) {
+      await conn.rollback();
+      throw e;
+    } finally {
+      conn.release();
+    }
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Internal error" });
+  }
+});
+
+app.post("/buy", async (req, res) => {
+  try {
+    const username = req.cookies.name;
+    const character = req.body.character;
+
+    if (!username) {
+      return res.status(401).json({ error: "Not authenticated" });
+    }
+
+    // Validate character key (or replace with a strict allow-list)
+    if (
+      typeof character !== "string" ||
+      !/^[a-zA-Z0-9_:-]{1,32}$/.test(character)
+    ) {
+      return res.status(400).json({ error: "Invalid character key" });
+    }
+
+    const price = unlockPrice(character);
+    if (price === undefined) {
+      return res.status(400).json({ error: "Character cannot be unlocked" });
+    }
+    if (!Number.isFinite(price) || price < 0) {
+      return res.status(500).json({ error: "Pricing error" });
+    }
+
+    // Build safe JSON path
+    const jsonPath = `$.${character}`;
+
+    // Single, atomic UPDATE:
+    //  - Deduct gems
+    //  - Set the character level to 1
+    //  - Only if: gems >= price AND current level < 1 (0 or missing)
+    //
+    // Notes:
+    //  * COALESCE(char_levels, JSON_OBJECT()) ensures JSON_SET has a JSON doc to write into.
+    //  * IFNULL(CAST(JSON_UNQUOTE(JSON_EXTRACT(...)) AS UNSIGNED), 0) treats missing/null as 0.
+    //  * All values and the JSON path are parameterized to avoid injection.
+    const conn = await pool.getConnection();
+    try {
+      const [result] = await conn.execute(
+        `
+        UPDATE users
+        SET
+          gems = gems - ?,
+          char_levels = JSON_SET(COALESCE(char_levels, JSON_OBJECT()), ?, 1)
+        WHERE name = ?
+          AND gems >= ?
+          AND IFNULL(CAST(JSON_UNQUOTE(JSON_EXTRACT(char_levels, ?)) AS UNSIGNED), 0) < 1
+        `,
+        [price, jsonPath, username, price, jsonPath]
+      );
+
+      if (result.affectedRows !== 1) {
+        // Could be: not enough gems, already unlocked, or user missing.
+        // Disambiguate with a quick read (optional but helpful):
+        const [rows] = await conn.execute(
+          `SELECT gems,
+                  IFNULL(CAST(JSON_UNQUOTE(JSON_EXTRACT(char_levels, ?)) AS UNSIGNED), 0) AS lvl
+           FROM users WHERE name = ?`,
+          [jsonPath, username]
+        );
+        if (rows.length === 0) {
+          return res.status(404).json({ error: "User not found" });
+        }
+        const { gems, lvl } = rows[0];
+        if (lvl >= 1) {
+          return res.status(409).json({ error: "Character already unlocked" });
+        }
+        if (Number(gems) < price) {
+          return res.status(403).json({ error: "Not enough gems" });
+        }
+        // Fallback for any other guard miss
+        return res.status(409).json({ error: "Unlock conflict, please retry" });
+      }
+
+      // Success: fetch new state to return (optional)
+      const [after] = await conn.execute(
+        `SELECT gems,
+                CAST(JSON_UNQUOTE(JSON_EXTRACT(char_levels, ?)) AS UNSIGNED) AS lvl
+         FROM users WHERE name = ?`,
+        [jsonPath, username]
+      );
+      const newGems = after[0]?.gems;
+      const newLevel = after[0]?.lvl ?? 1;
+
+      console.log(`${username} unlocked ${character} for ${price} gems`);
+
+      return res.status(200).json({
+        success: true,
+        character,
+        newLevel,
+        spent: price,
+        gems: newGems,
+      });
+    } finally {
+      conn.release();
+    }
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Internal error" });
   }
 });
 
