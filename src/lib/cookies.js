@@ -1,20 +1,79 @@
-export function createCookie(cookieName, cookieValue) {
-  const date = new Date();
-  // Set expiration date to one month from now
-  date.setTime(date.getTime() + 30 * 24 * 60 * 60 * 1000);
-  const expires = "expires=" + date.toUTCString();
-  document.cookie = cookieName + "=" + cookieValue + ";" + expires + ";path=/";
+// cookies.js
+
+const DEFAULT_PATH = "/";
+const DEFAULT_SAMESITE = "Lax";
+
+/**
+ * Set a non-HttpOnly cookie from the browser.
+ * NOTE: You cannot set/clear the signed HttpOnly identity cookie (guest_id/user_id) from JS.
+ * Use a server endpoint (e.g., POST /logout) to clear identity cookies.
+ */
+export function setCookie(
+  name,
+  value,
+  {
+    days = 30,           // default 30 days
+    path = DEFAULT_PATH,
+    sameSite = DEFAULT_SAMESITE, // "Lax" by default
+    secure,              // auto-true on HTTPS if not provided
+  } = {}
+) {
+  const maxAge = Math.max(0, Math.floor(days * 24 * 60 * 60)); // seconds
+  const isHttps =
+    typeof window !== "undefined" &&
+    window.location &&
+    window.location.protocol === "https:";
+  const useSecure = secure ?? isHttps;
+
+  let cookie =
+    `${encodeURIComponent(name)}=${encodeURIComponent(value)}; ` +
+    `Max-Age=${maxAge}; Path=${path}; SameSite=${sameSite}`;
+
+  if (useSecure) cookie += "; Secure";
+
+  document.cookie = cookie;
 }
 
-export function getCookie(cookieName) {
-  const name = cookieName + "=";
-  const decodedCookie = decodeURIComponent(document.cookie);
-  const array = decodedCookie.split(";");
-  for (let i = 0; i < array.length; i++) {
-    let cookie = array[i].trim();
-    if (cookie.indexOf(name) === 0) {
-      return cookie.substring(name.length);
+/** Backward compatibility for existing imports */
+export const createCookie = setCookie;
+
+/**
+ * Get a cookie value by name. Returns "" if not found (backward compatible).
+ */
+export function getCookie(name) {
+  const needle = `${encodeURIComponent(name)}=`;
+  const raw = document.cookie || "";
+  if (!raw) return "";
+  const parts = raw.split("; ");
+  for (const part of parts) {
+    if (part.startsWith(needle)) {
+      return decodeURIComponent(part.slice(needle.length));
     }
   }
   return "";
+}
+
+/**
+ * Delete a cookie by name.
+ * NOTE: This cannot delete HttpOnly cookies set by the server; use a server route (e.g., /logout).
+ */
+export function deleteCookie(
+  name,
+  { path = DEFAULT_PATH, sameSite = DEFAULT_SAMESITE, secure } = {}
+) {
+  const isHttps =
+    typeof window !== "undefined" &&
+    window.location &&
+    window.location.protocol === "https:";
+  const useSecure = secure ?? isHttps;
+
+  let cookie =
+    `${encodeURIComponent(name)}=; Max-Age=0; Path=${path}; SameSite=${sameSite}`;
+  if (useSecure) cookie += "; Secure";
+  document.cookie = cookie;
+}
+
+/** Convenience helper for your UI banner */
+export function getDisplayName() {
+  return getCookie("display_name") || "Guest";
 }

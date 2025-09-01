@@ -21,8 +21,33 @@ async function runQuery(sql, params = []) {
   }
 }
 
+async function deleteEmptyParties() {
+  // MySQL needs a subselect wrapper when deleting from the same table you select
+  const sql = `
+    DELETE FROM parties
+    WHERE id IN (
+      SELECT id FROM (
+        SELECT p.id
+        FROM parties p
+        LEFT JOIN party_members m ON m.party_id = p.id
+        GROUP BY p.id
+        HAVING COUNT(m.name) = 0
+      ) as t
+    )
+  `;
+  try {
+    const result = await runQuery(sql);
+    return result.affectedRows || 0;
+  } catch (err) {
+    console.error("deleteEmptyParties failed:", err && err.message);
+    throw err;
+  }
+}
+
+
 
 module.exports = {
     pool,
-    runQuery
+    runQuery,
+    deleteEmptyParties
 };

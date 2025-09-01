@@ -530,6 +530,7 @@ function applyUpgrade(character, currentLevel) {
         } catch (_) {}
         // Re-render the specific card and play animation
         rerenderCharacterCard(character, _userDataRef || {}, "upgrade");
+        document.getElementById('coin-count').textContent = _userDataRef.coins;
       } else {
         showErrorDialog(data.error || "Upgrade failed.");
       }
@@ -566,6 +567,7 @@ function applyUnlock(character, price) {
           }
         } catch (_) {}
         rerenderCharacterCard(character, _userDataRef || {}, "unlock");
+        document.getElementById('gem-count').textContent = _userDataRef.gems;
       } else {
         showErrorDialog(data.error || "Unlock failed.");
       }

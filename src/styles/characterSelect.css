@@ -140,7 +140,7 @@
 
 /* Locked state */
 .character-card.locked {
-  filter: grayscale(0.8) brightness(0.8);
+  filter: brightness(0.9);
   border-color: #6b7280;
 }
 .character-card.locked .stat-fill {
@@ -166,10 +166,9 @@
   position: absolute;
   top: 8px;
   right: 8px;
-  width: 40px;
-  height: 40px;
+  width: 30px;
+  height: 30px;
   object-fit: contain;
-  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.5));
   pointer-events: none;
 }
 
@@ -383,7 +382,7 @@
 }
 
 .locked-button {
-  background: linear-gradient(145deg, #4b5563, #374151);
+  background: linear-gradient(145deg, #5c79a2, #526c96);
   color: #e5e7eb;
   border: none;
   padding: 8px 16px;

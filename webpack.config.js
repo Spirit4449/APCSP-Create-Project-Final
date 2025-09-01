@@ -8,6 +8,8 @@ module.exports = {
     matchmaking: "./src/matchmaking.js",
     welcome: "./src/welcome.js",
     index: "./src/index.js",
+    signup: "./src/signup.js",
+    login: "./src/login.js",
   },
   output: {
     filename: "[name].bundle.js",

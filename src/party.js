@@ -1,13 +1,30 @@
+import { sonner } from "./lib/sonner.js";
+
+const socket = io("/");
+
 export function checkIfInParty() {
   const pathname = window.location.pathname;
   if (pathname.includes("party")) {
-    return pathname.split("/").filter(Boolean).pop();;
+    return pathname.split("/").filter(Boolean).pop();
   }
   return false;
 }
 
-const socket = io("/");
-
+export function createParty() {
+  fetch("/create-party", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+  })
+    .then((response) => response.json())
+    .then((data) => {
+      window.location.href = `/party/${data.partyId}`;
+    })
+    .catch((error) => {
+      console.error("Error:", error);
+    });
+}
 
 // party.addEventListener("click", (event) => {
 //   if (popup) {

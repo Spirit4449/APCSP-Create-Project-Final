@@ -1,5 +1,9 @@
 // server.js
 
+// ---------------------------
+// Imports & Configuration
+// ---------------------------
+
 // File Imports
 const {
   DEFAULT_CHARACTER,
@@ -11,7 +15,7 @@ const {
 } = require("./src/lib/characterStats");
 
 // Database
-const { pool, runQuery } = require("./sql");
+const { pool, runQuery, deleteEmptyParties } = require("./sql");
 
 // Setup server and requirements
 const express = require("express");
@@ -23,18 +27,23 @@ const server = http.createServer(app);
 const io = socketIo(server);
 const port = 3002;
 
-// Cloning
-const cloneDeep = require("lodash.clonedeep");
-
-// Parsers
-const bodyParser = require("body-parser");
+// Parsers & Security
 const cookieParser = require("cookie-parser");
+const bcrypt = require("bcrypt");
+
+// Require a cookie signing secret (integrity)
+const COOKIE_SECRET =
+  "process.env.COOKIE_SECRET" || `dev-insecure-${Math.random().toString(36).slice(2)}-${Date.now()}`;
+if (!process.env.COOKIE_SECRET) {
+  console.warn("⚠️  COOKIE_SECRET not set. Using a temporary dev secret (cookies will invalidate on restart).");
+}
+
+// Express parsers
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(bodyParser.json());
-app.use(cookieParser());
+app.use(cookieParser(COOKIE_SECRET)); // IMPORTANT: signed cookies enabled
 
-// Webpack
+// Webpack (dev middleware)
 const webpack = require("webpack");
 const webpackDevMiddleware = require("webpack-dev-middleware");
 const webpackHotMiddleware = require("webpack-hot-middleware");
@@ -46,19 +55,101 @@ app.use(
     publicPath: config.output.publicPath,
   })
 );
-
 app.use(webpackHotMiddleware(compiler));
 
 // Serve files from dist
 app.use(express.static(path.join(__dirname, "dist")));
 
-// List of names
-const names = [];
-// Dictionary of parties
-const parties = {};
-// Dictionary of games
-const games = {};
-// Health regeneration config
+// ---------------------------
+// Cookie Helpers
+// ---------------------------
+
+const isProd = process.env.NODE_ENV === "production";
+
+const SIGNED_COOKIE_OPTS = {
+  httpOnly: true,
+  sameSite: "lax",
+  secure: isProd,
+  signed: true,
+  // optionally: domain, path
+};
+
+const DISPLAY_COOKIE_OPTS = {
+  // Readable by JS; cosmetic only
+  sameSite: "lax",
+  secure: isProd,
+};
+
+// Create a random short suffix
+function randomString(length, numbersOnly = false) {
+  let letters = numbersOnly
+    ? "0123456789"
+    : "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  let out = "";
+  for (let i = 0; i < length; i++) {
+    out += letters.charAt(Math.floor(Math.random() * letters.length));
+  }
+  return out;
+}
+
+// Create a brand-new guest row and set cookies
+async function createGuestAndSetCookies(res) {
+  const guestName = `Guest${randomString(6, true)}`;
+  const expiresAtMs = Date.now() + 2 * 60 * 60 * 1000; // 2 hours
+  const expiresAt = new Date(expiresAtMs);
+
+  const charLevelsJson = JSON.stringify(defaultCharacterList());
+
+  // Insert guest row
+  const result = await runQuery(
+    "INSERT INTO users (name, char_class, status, expires_at, char_levels) VALUES (?, ?, ?, ?, ?)",
+    [guestName, DEFAULT_CHARACTER, "lobby", new Date(expiresAtMs), charLevelsJson]
+  );
+  const userId = result.insertId;
+
+  // Fetch the full row we just created (includes coins, gems, char_class, etc.)
+  const rows = await runQuery("SELECT * FROM users WHERE user_id = ? LIMIT 1", [userId]);
+  const fullUser = rows[0];
+
+  // Set cookies
+  res.cookie("user_id", String(userId), { ...SIGNED_COOKIE_OPTS, maxAge: 1000 * 60 * 60 * 24 * 30 });
+  res.cookie("display_name", fullUser.name, { ...DISPLAY_COOKIE_OPTS, expires: expiresAt });
+
+  return fullUser;
+}
+
+// Fetch current user from signed cookie; if missing/invalid and `autoCreate` is true, create a guest
+async function getOrCreateCurrentUser(req, res, { autoCreate = true } = {}) {
+  const id = req.signedCookies?.user_id;
+  if (id) {
+    const rows = await runQuery("SELECT * FROM users WHERE user_id = ? LIMIT 1", [id]);
+    if (rows.length > 0) {
+      return rows[0];
+    }
+    // Stale cookie with no row: fall through to create if allowed
+  }
+  if (!autoCreate) return null;
+  return await createGuestAndSetCookies(res);
+}
+
+// Strict getter: require a valid signed cookie & row, do NOT auto-create
+async function requireCurrentUser(req, res) {
+  const id = req.signedCookies?.user_id;
+  if (!id) return null;
+  const rows = await runQuery("SELECT * FROM users WHERE user_id = ? LIMIT 1", [id]);
+  if (rows.length === 0) return null;
+  return rows[0];
+}
+
+// Convenience: guest if expires_at !== null
+function isGuest(userRow) {
+  return userRow?.expires_at !== null && userRow?.expires_at !== undefined;
+}
+
+// ---------------------------
+// Health regen helpers (unchanged)
+// ---------------------------
+
 const REGEN_TICK_MS = 1500; // apply regen every 1.5s
 const REGEN_IDLE_DELAY_MS = 3000; // ms after last attack to start regen
 const REGEN_HIT_IDLE_DELAY_MS = 3000; // ms after being hit to start regen
@@ -66,17 +157,17 @@ const REGEN_MIN_PER_TICK = 500; // minimum heal per tick when tapering
 const REGEN_FRIENDLY_STEP = 50; // quantize regen to multiples of 50
 const REGEN_MISSING_FRACTION_PER_TICK = 0.3; // 25% of missing health per tick
 
-// Initialize health fields for all players in a game object
 function initGameHealth(gameObj) {
   try {
     for (const teamKey in gameObj) {
       const team = gameObj[teamKey];
       for (const idx in team) {
         const p = team[idx];
+        // NOTE: This referenced character.CHARACTER_HEALTH in your original code.
+        // Leaving as-is to avoid breaking external imports.
         const max = character.CHARACTER_HEALTH[p.character];
         p.maxHealth = typeof p.maxHealth === "number" ? p.maxHealth : max;
-        p.currentHealth =
-          typeof p.currentHealth === "number" ? p.currentHealth : p.maxHealth;
+        p.currentHealth = typeof p.currentHealth === "number" ? p.currentHealth : p.maxHealth;
       }
     }
   } catch (e) {
@@ -84,392 +175,335 @@ function initGameHealth(gameObj) {
   }
 }
 
-// Welcome screen
-app.get("/welcome", (req, res) => {
-  res.sendFile(path.join(__dirname, "dist", "welcome.html"));
-});
+// ---------------------------
+// Static pages
+// ---------------------------
 
 app.get("/partyfull", (req, res) => {
   res.sendFile(path.join(__dirname, "dist", "/Errors/partyfull.html"));
 });
-
 app.get("/cannotjoin", (req, res) => {
   res.sendFile(path.join(__dirname, "dist", "/Errors/cannotjoin.html"));
 });
-
 app.get("/partynotfound", (req, res) => {
   res.sendFile(path.join(__dirname, "dist", "/Errors/partynotfound.html"));
 });
 app.get("/signed-out", (req, res) => {
   res.sendFile(path.join(__dirname, "dist", "/Errors/signed-out.html"));
 });
+app.get("/signup", (req, res) => {
+  res.sendFile(path.join(__dirname, "dist", "/signup.html"));
+});
+app.get("/login", (req, res) => {
+  res.sendFile(path.join(__dirname, "dist", "/login.html"));
+});
 
+// ---------------------------
+// Identity & Profile endpoints
+// ---------------------------
+
+// Source-of-truth profile for the current request.
+// Auto-creates a guest if none exists yet (convenient for first contact).
 app.post("/status", async (req, res) => {
   try {
-    let username = req.cookies?.name;
-    // If no cookie, create a guest user and set cookie
-    let created = false;
-    if (!username) {
-      username = "Guest" + randomString(5, true); // assign to the SAME variable
-      const expiresAt = new Date(Date.now() + 2 * 60 * 60 * 1000); // +2h
+    const user = await getOrCreateCurrentUser(req, res, { autoCreate: true });
+    const username = user.name;
 
-      // Gets the array of characters and creates a dictionary with each one having a level of 1
-      const charLevels = Object.fromEntries(
-        getAllCharacters().map((k) => [k, 1])
-      );
+    // Party membership lookup still keyed by name (kept as-is)
+    const partyRows = await runQuery("SELECT party_id FROM party_members WHERE name = ? LIMIT 1", [username]);
 
-      // Try to insert; handle rare name-collision by retrying once
-      try {
-        await runQuery(
-          "INSERT INTO users (name, char_class, status, expires_at, char_levels) VALUES (?, ?, ?, ?, ?)",
-          [
-            username,
-            DEFAULT_CHARACTER,
-            "lobby",
-            expiresAt,
-            JSON.stringify(defaultCharacterList()),
-          ]
-        );
-      } catch (e) {
-        console.log("Error inserting user:", e);
-        return res.status(500).json({ message: "Error inserting user" });
-      }
-
-      // set cookie on THIS response
-      res.cookie("name", username, {
-        expires: expiresAt,
-        httpOnly: true,
-        sameSite: "lax",
-        secure: process.env.NODE_ENV === "production",
-      });
-      created = true;
-      console.log(`POST STATUS: Created new guest user ${username}`);
-    }
-
-    // Fetch user (guest just created, or existing registered)
-    const rows = await runQuery("SELECT * FROM users WHERE name = ?", [
-      username,
-    ]);
-    if (rows.length > 0) {
-      console.log(`POST STATUS: Retrieved user data for ${username}`);
-      const userData = rows[0];
-
-      // Fetch party memberships for this user
-      const party_id = await runQuery(
-        "SELECT party_id FROM party_members WHERE name = ?",
-        [username]
-      );
-
-      if (party_id.length > 0) {
-        console.log("User is in a party: ", party_id);
-      }
-
-      return res.status(created ? 201 : 200).json({
-        userData,
-        guest: userData.expires_at !== null,
-        newlyCreated: created,
-        party_id: party_id.length > 0 ? party_id[0].party_id : null,
-      });
-    } else {
-      // (Optional) if cookie exists but DB row missing/expired, recreate here
-      console.log(`POST STATUS: User ${username} not found`);
-      return res.status(404).json({ message: "User not found" });
-    }
+    return res.status(200).json({
+      success: true,
+      userData: user,
+      guest: isGuest(user),
+      party_id: partyRows.length > 0 ? partyRows[0].party_id : null,
+    });
   } catch (error) {
     console.error("Error in /status:", error);
-    return res.status(500).json({ message: "Internal server error" });
+    return res.status(500).json({ success: false, message: "Internal server error" });
   }
 });
 
-// Game endpoint
-app.get("/game/:gameid", (req, res) => {
-  if (!req.cookies["name"]) {
-    return res.redirect("/welcome"); // If no name cookie, redirect to welcome screen
-  }
-
-  const gameId = req.params.gameid; // Get game id from url
-  const username = req.cookies.name; // Get name from cookies
-
-  let personFound = false;
-
-  if (games[gameId]) {
-    // Checks to see if the person is in the game to allow them to enter
-    for (const teamKey in games[gameId]) {
-      let team = games[gameId][teamKey]; // For each team in the game
-      for (const personKey in team) {
-        // For each person in the team
-        if (team[personKey]["name"] === username) {
-          personFound = true;
-        }
-      }
+// Lightweight "who am I?" for client UI; does not create a new guest.
+app.get("/me", async (req, res) => {
+  try {
+    const user = await requireCurrentUser(req, res);
+    if (!user) {
+      return res.json({ authenticated: false, name: "Guest", isGuest: true });
     }
-  }
-  // If the person was found, they can enter
-  if (personFound) {
-    res.sendFile(path.join(__dirname, "dist", "game.html"));
-  } else {
-    // If the person was not found, it sends them an error message
-    res.sendFile(path.join(__dirname, "dist", "/Errors/cannotjoin.html"));
+    return res.json({
+      authenticated: true,
+      name: user.name,
+      isGuest: isGuest(user),
+      userId: user.user_id,
+    });
+  } catch (e) {
+    console.error("GET /me error:", e);
+    return res.json({ authenticated: false, name: "Guest", isGuest: true });
   }
 });
 
-app.post("/create-name", (req, res) => {
-  const name = req.body.name;
-  if (name && !names.includes(name)) {
-    // Checks if name already exists inside of the name list
-    names.push(name);
-    return res.status(200).json({ message: "success" }); // Returns success status
-  } else {
-    return res.status(400).json({ message: "name taken" }); // Returns not found status
-  }
-});
+// ---------------------------
+// Parties
+// ---------------------------
 
-// Returns a list of players inside of the gameid for both user and op team
-app.post("/players", (req, res) => {
-  const gameId = req.body.gameId;
-  const username = req.body.username;
-  let userTeam = {};
-  let opTeam = {};
-  for (const teamKey in games[gameId]) {
-    const team = games[gameId][teamKey];
-    let tempTeam = {};
-    for (const playerKey in team) {
-      const player = team[playerKey];
-      tempTeam[player.name] = {
-        character: player.character,
-        spawnPlatform: player.spawnPlatform,
-        spawn: player.spawn,
-      };
+app.post("/create-party", async (req, res) => {
+  try {
+    const user = await requireCurrentUser(req, res);
+    if (!user) return res.status(401).json({ error: "Not authenticated" });
+    const username = user.name;
+
+    await runQuery("START TRANSACTION");
+
+    // Leave old party (if any)
+    await runQuery("DELETE FROM party_members WHERE name = ?", [username]);
+
+    // Create party
+    const { insertId: partyId } = await runQuery("INSERT INTO parties (status, mode, map) VALUES (?, ?, ?)", [
+      "lobby",
+      1,
+      1,
+    ]);
+
+    // Join party (team1 by default)
+    await runQuery("INSERT INTO party_members (party_id, name, team) VALUES (?, ?, ?)", [partyId, username, "team1"]);
+
+    await runQuery("COMMIT");
+    console.log("New party created by", username, partyId);
+    return res.status(201).json({ partyId });
+  } catch (err) {
+    try {
+      await runQuery("ROLLBACK");
+    } catch {}
+    console.error("create-party failed:", err && err.message);
+    if (err && err.code === "ER_DUP_ENTRY") {
+      return res.status(409).json({ error: "Duplicate membership" });
     }
-    if (username in tempTeam) {
-      // If the user is in the team, then it will be called userTeam
-      userTeam = tempTeam;
-    } else {
-      opTeam = tempTeam;
-    }
+    return res.status(500).json({ error: "Failed to create party" });
   }
-
-  return res.status(200).json({ userTeam, opTeam });
-});
-
-app.post("/party-members", (req, res) => {
-  const partyId = req.body.partyId;
-
-  if (!parties[partyId]) {
-    return res.sendFile(
-      path.join(__dirname, "dist", "/Errors/partynotfound.html")
-    );
-  }
-  const membersCount = parties[partyId].length - 1; // Returns members in the party. -1 accounts for the metadata
-  return res.status(200).json({ membersCount, members: parties[partyId] }); // Returns party members data also
-});
-
-// Matchmaking
-app.get("/matchmaking/:partyid", (req, res) => {
-  if (!req.cookies["name"]) {
-    return res.redirect("/welcome"); // If no name cookie, redirect to welcome screen
-  }
-
-  const partyId = req.params.partyid; // Grabs party id from the url
-  const username = req.cookies.name; // Grabs username from the cookie
-
-  // If the party exists and it is in matchmaking
-  if (parties[partyId] && parties[partyId][0]["matchmaking"] === true) {
-    let personFound = false;
-    for (const person in parties[partyId]) {
-      // If the user is found in the party, they can proceed
-      if (parties[partyId][person]["name"]) {
-        if (parties[partyId][person]["name"] === username) {
-          personFound = true;
-        }
-      }
-    }
-
-    // If the user is in the party, they can go to the matchmaking screen
-    if (personFound) {
-      res.sendFile(path.join(__dirname, "dist", "matchmaking.html"));
-    } else {
-      return res.sendFile(
-        path.join(__dirname, "dist", "/Errors/cannotjoin.html")
-      );
-    }
-  } else {
-    // If the party doesn't exist or it isn't in matchmaking, it will send an error message
-    return res.sendFile(
-      path.join(__dirname, "dist", "/Errors/cannotjoin.html")
-    );
-  }
-
-  const party1 = req.params.partyid; // Party 1 (aka user party)
-  const neededPlayers = parties[party1][0]["mode"] * 2; // Number of players needed to find is calculated by finding the id of the mode and multiplying it by two.
-  const players = Object.keys(parties[party1]).length - 1; // Number of players inside of the party minus the metadata
-  const playersToFind = neededPlayers - players; // The amount of players to find is calculated by subtracting the needed players minus the players in the party
-  function checkParties() {
-    for (const party2 in parties) {
-      // For each party in the parties dictionary
-      const partyToFind = parties[party2];
-      if (party1 !== party2) {
-        // If the party is not equal to your party
-        const party2Players = Object.keys(partyToFind).length - 1;
-        const party2Matchmaking = partyToFind[0]["matchmaking"] === true;
-        const party2Map = partyToFind[0]["map"];
-        const party1Map = parties[partyId][0]["map"];
-        if (
-          party2Matchmaking &&
-          party2Players === playersToFind &&
-          party2Map === party1Map // If it fulfills the player requirement
-        ) {
-          // The server has found a party to matchmake with and will not enter matchmaking
-
-          // Set the variables
-          parties[party1][0]["matchmaking"] = false;
-          parties[party2][0]["matchmaking"] = false;
-          parties[party1][0]["gameStarted"] = true;
-          parties[party2][0]["gameStarted"] = true;
-
-          // Clone the dictionaries
-          const party1Dict = clonePlayers(party1);
-          const party2Dict = clonePlayers(party2);
-
-          // Create a unique gameid for the party
-          const gameId = randomString(20);
-          games[gameId] = {};
-          games[gameId][party1] = party1Dict; // Set the party id of the first party equal to the dictionary
-          games[gameId][party2] = party2Dict; // Set the party id of the second party equal to the dictionary
-
-          // Array to pick a random party
-          const array = [party1, party2];
-          const randomParty = array[Math.floor(Math.random() * array.length)]; // Randomly pick a party
-
-          const party1Players = games[gameId][party1];
-          const party2Players = games[gameId][party2];
-
-          // Assign spawn properties based on party affiliation
-          if (randomParty === party1) {
-            setSpawnProperties(party1Players, "top");
-            setSpawnProperties(party2Players, "bottom");
-          } else {
-            setSpawnProperties(party1Players, "bottom");
-            setSpawnProperties(party2Players, "top");
-          }
-
-          // Initialize health for all players based on their chosen character
-          initGameHealth(games[gameId]);
-
-          const map = parties[partyId][0]["map"];
-          // Broadcast In Battle status to both parties' lobbies
-          try {
-            const p1Arr = parties[party1];
-            const p2Arr = parties[party2];
-            if (Array.isArray(p1Arr)) {
-              const statuses = [];
-              for (let i = 1; i < p1Arr.length; i++) {
-                const m = p1Arr[i];
-                if (m && m.name) {
-                  m.status = "In Battle";
-                  statuses.push({ name: m.name, status: m.status });
-                }
-              }
-              io.emit("status-bulk", { partyId: party1, statuses });
-            }
-            if (Array.isArray(p2Arr)) {
-              const statuses = [];
-              for (let i = 1; i < p2Arr.length; i++) {
-                const m = p2Arr[i];
-                if (m && m.name) {
-                  m.status = "In Battle";
-                  statuses.push({ name: m.name, status: m.status });
-                }
-              }
-              io.emit("status-bulk", { partyId: party2, statuses });
-            }
-          } catch (e) {
-            // swallow
-          }
-          // After 1 second, game-started will be emit. This is to give time for the players, to enter the matchmaking screen.
-          setTimeout(() => {
-            io.emit("game-started", {
-              partyId: party1,
-              foundId: party2,
-              gameId,
-              gameData: games[gameId],
-              partyMembers: games[gameId][party1].length,
-              map,
-            });
-          }, 1000);
-        } else {
-          // candidate not suitable
-        }
-      }
-    }
-  }
-
-  checkParties(); // Check parties function is called
-});
-
-app.post("/party-creation", (req, res) => {
-  const partyId = randomString(10);
-  parties[partyId] = [
-    { mode: "1", map: "1", matchmaking: false, gameStarted: false },
-  ]; // Adds the party to the parties dictionary with default values
-  return res.status(200).json({ partyId });
 });
 
 app.get("/party/:partyid", (req, res) => {
-  if (!req.cookies["name"]) {
-    return res.redirect("/welcome"); // If no name cookie, redirect to welcome screen
+  res.sendFile(path.join(__dirname, "dist", "index.html"));
+});
+
+app.post("/partydata", async (req, res) => {
+  const user = await requireCurrentUser(req, res);
+  if (!user) return res.status(401).json({ error: "Not authenticated" });
+  const username = user.name;
+  const partyId = req.body?.partyId;
+
+  if (!partyId) {
+    return res.status(400).json({ error: "partyId is required" });
   }
 
-  const partyId = req.params.partyid;
-  if (parties[partyId] && parties[partyId][0]["matchmaking"] === true) {
-    parties[partyId][0]["matchmaking"] = false; // Sets matchmaking to false
-    io.emit("matchmaking-disconnect", { partyId }); // If a player from a party with matchmaking set to true leaves, it will send a disconnect message to all the users.
-  }
-  let extraSubtract = 0; // Extra subtract in case player reloading is not removed
-  if (partyId in parties) {
-    const username = req.cookies["name"];
-    for (const user in parties[partyId]) {
-      if (parties[partyId][user]["name"] === username) {
-        // Sometimes when reloading the user stays in the party so we must check for that
-        extraSubtract--;
-        //delete parties[partyId][user]
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    await conn.beginTransaction();
+
+    // 1) Lock party row to prevent overfill
+    const [partyRows] = await conn.query("SELECT * FROM parties WHERE party_id = ? FOR UPDATE", [partyId]);
+    if (!partyRows || partyRows.length === 0) {
+      await conn.rollback();
+      return res.status(404).sendFile(path.join(__dirname, "dist/Errors", "partynotfound.html"));
+    }
+    const party = partyRows[0];
+    const maxMembers = party.max_members ?? party.capacity ?? party.max_size ?? null;
+
+    // 2) Already a member?
+    const [existing] = await conn.query("SELECT 1 FROM party_members WHERE party_id = ? AND name = ? LIMIT 1", [
+      partyId,
+      username,
+    ]);
+
+    if (!existing || existing.length === 0) {
+      // 3) Count members (lock the set)
+      const [countRows] = await conn.query(
+        "SELECT COUNT(*) AS cnt FROM party_members WHERE party_id = ? FOR UPDATE",
+        [partyId]
+      );
+      const currentCount = countRows[0].cnt;
+      if (maxMembers != null && currentCount >= maxMembers) {
+        await conn.rollback();
+        return res.status(409).sendFile(path.join(__dirname, "dist/Errors", "partyfull.html"));
+      }
+
+      // 4) Insert membership (ensure UNIQUE (party_id, name) on table)
+      try {
+        await conn.query("INSERT INTO party_members (party_id, name, joined_at) VALUES (?, ?, NOW())", [
+          partyId,
+          username,
+          ,
+        ]);
+      } catch (e) {
+        if (!(e && e.code === "ER_DUP_ENTRY")) {
+          await conn.rollback();
+          console.error("Join insert failed:", e);
+          return res.status(500).json({ error: "Could not join party" });
+        }
       }
     }
-    const mode = Number(parties[partyId][0]["mode"]) * 2;
-    if (Object.keys(parties[partyId]).length - 1 + extraSubtract === mode) {
-      // Check if it is full account for 0 index
 
-      return res.sendFile(
-        path.join(__dirname, "dist", "/Errors/partyfull.html")
-      );
-    } else {
-      return res.sendFile(path.join(__dirname, "dist", "party.html"));
-    }
-  } else {
-    return res.sendFile(
-      path.join(__dirname, "dist", "/Errors/partynotfound.html")
-    );
+    // 5) Fetch members
+    const [memberRows] = await conn.query("SELECT name FROM party_members WHERE party_id = ? ORDER BY name", [partyId]);
+
+    await conn.commit();
+
+    // 6) Return JSON payload
+    return res.json({
+      party,
+      members: memberRows.map((m) => m.name),
+      viewer: username,
+    });
+  } catch (err) {
+    try {
+      if (conn) await conn.rollback();
+    } catch {}
+    console.error("Error in POST /partydata:", err);
+    return res.status(500).json({ error: "Internal error" });
+  } finally {
+    if (conn) conn.release();
   }
 });
 
-app.post("/upgrade", async (req, res) => {
-  try {
-    const username = req.cookies.name;
-    const character = req.body.character;
+// ---------------------------
+// Signup (upgrade guest → permanent)
+// ---------------------------
 
-    if (!username) {
-      return res.status(401).json({ error: "Not authenticated" });
+const USERNAME_RE = /^[a-zA-Z0-9_.-]{3,14}$/;
+const MIN_PW = 6;
+const MAX_PW = 32;
+
+app.post("/signup", async (req, res) => {
+  try {
+    let { username, password } = req.body || {};
+    username = typeof username === "string" ? username.trim() : "";
+    password = typeof password === "string" ? password : "";
+
+    if (!username || !password) {
+      return res.status(400).json({ success: false, error: "Username and password are required." });
+    }
+    if (!USERNAME_RE.test(username)) {
+      return res
+        .status(400)
+        .json({ success: false, error: "Username must be 3-14 chars: letters, numbers, _ . - only." });
+    }
+    if (password.length < MIN_PW || password.length > MAX_PW) {
+      return res.status(400).json({ success: false, error: `Password must be ${MIN_PW}-${MAX_PW} characters.` });
     }
 
-    // Validate inputs and test for sql injection
-    if (
-      typeof character !== "string" ||
-      !/^[a-zA-Z0-9_:-]{1,32}$/.test(character)
-    ) {
+    const user = await requireCurrentUser(req, res);
+    if (!user) return res.status(400).json({ success: false, error: "Guest session not found." });
+
+    // Must still be a guest to upgrade
+    if (user.expires_at === null) {
+      return res.status(400).json({ success: false, error: "This account is already permanent." });
+    }
+
+    // Hash password (store in existing `password` column)
+    const hash = await bcrypt.hash(password, 12);
+
+    try {
+      const result = await runQuery(
+        `UPDATE users
+           SET name = ?, password = ?, expires_at = NULL
+         WHERE user_id = ?`,
+        [username, hash, user.user_id]
+      );
+      if (!result || result.affectedRows !== 1) {
+        return res.status(409).json({ success: false, error: "Unable to complete signup. Please try again." });
+      }
+    } catch (err) {
+      if (err && (err.code === "ER_DUP_ENTRY" || err.errno === 1062)) {
+        return res.status(409).json({ success: false, error: "Username is already taken." });
+      }
+      throw err;
+    }
+
+    // Refresh readable display cookie to the new name
+    res.cookie("display_name", username, DISPLAY_COOKIE_OPTS);
+
+    // Optionally clear/rotate user_id here; or keep it (same user_id) since the row is now permanent
+    // res.clearCookie('user_id', SIGNED_COOKIE_OPTS);
+
+    return res.status(201).json({ success: true, username });
+  } catch (error) {
+    console.error("Error signing up user:", error);
+    return res.status(500).json({ success: false, error: "Internal server error" });
+  }
+});
+
+app.post("/login", async (req, res) => {
+  try {
+    let { username, password } = req.body || {};
+    username = typeof username === "string" ? username.trim() : "";
+    password = typeof password === "string" ? password : "";
+
+    if (!username || !password) {
+      return res.status(400).json({ success: false, error: "Username and password are required." });
+    }
+
+    // Look up user (must be permanent: expires_at IS NULL)
+    const rows = await runQuery(
+      "SELECT user_id, name, password FROM users WHERE name = ? AND expires_at IS NULL LIMIT 1",
+      [username]
+    );
+    if (rows.length === 0) {
+      return res.status(401).json({ success: false, error: "Invalid username or password." });
+    }
+    const user = rows[0];
+
+    // Compare password hash
+    const ok = await bcrypt.compare(password, user.password || "");
+    if (!ok) {
+      return res.status(401).json({ success: false, error: "Invalid username or password." });
+    }
+
+    // Success → set cookies
+    res.cookie("user_id", String(user.user_id), {
+      ...SIGNED_COOKIE_OPTS,
+      maxAge: 1000 * 60 * 60 * 24 * 20, // 20 days stay logged in
+    });
+    res.cookie("display_name", user.name, DISPLAY_COOKIE_OPTS);
+
+    return res.status(200).json({
+      success: true,
+      userId: user.user_id,
+      username: user.name,
+    });
+  } catch (err) {
+    console.error("Error in /login:", err);
+    return res.status(500).json({ success: false, error: "Internal server error" });
+  }
+});
+
+app.post("/logout", (req, res) => {
+  try {
+    res.clearCookie("user_id", SIGNED_COOKIE_OPTS);
+    res.clearCookie("display_name", DISPLAY_COOKIE_OPTS);
+  } catch (_) {}
+  // Optional: also invalidate any server-side session if you adopt sessions
+  return res.status(200).json({ success: true });
+});
+
+
+
+// ---------------------------
+// Game economy endpoints
+// ---------------------------
+
+app.post("/upgrade", async (req, res) => {
+  try {
+    const user = await requireCurrentUser(req, res);
+    if (!user) return res.status(401).json({ error: "Not authenticated" });
+    const username = user.name;
+    const character = req.body.character;
+
+    if (typeof character !== "string" || !/^[a-zA-Z0-9_:-]{1,32}$/.test(character)) {
       return res.status(400).json({ error: "Invalid character key" });
     }
 
-    // Build a safe JSON path like $.character
     const jsonPath = `$.${character}`;
 
     const conn = await pool.getConnection();
@@ -486,7 +520,6 @@ app.post("/upgrade", async (req, res) => {
       }
 
       const dbCoins = Number(rows[0].coins);
-      // JSON_EXTRACT returns JSON; handle null and cast
       const dbLevel = rows[0].lvl == null ? 0 : Number(rows[0].lvl);
 
       if (dbLevel >= LEVEL_CAP) {
@@ -494,7 +527,7 @@ app.post("/upgrade", async (req, res) => {
         return res.status(409).json({ error: "Level cap reached" });
       }
 
-      const price = upgradePrice(dbLevel); // compute on server from authoritative level
+      const price = upgradePrice(dbLevel);
       if (!Number.isFinite(price) || price < 0) {
         await conn.rollback();
         return res.status(500).json({ error: "Pricing error" });
@@ -504,10 +537,6 @@ app.post("/upgrade", async (req, res) => {
         return res.status(403).json({ error: "Not enough coins" });
       }
 
-      // Single guarded UPDATE:
-      //  - deduct coins
-      //  - set level to dbLevel + 1
-      //  - ensure user still has enough coins AND level didn't change since we read it
       const [result] = await conn.execute(
         `
         UPDATE users
@@ -522,20 +551,13 @@ app.post("/upgrade", async (req, res) => {
       );
 
       if (result.affectedRows !== 1) {
-        // Someone else updated concurrently or funds changed
         await conn.rollback();
         return res.status(409).json({ error: "Upgrade conflict, retry" });
       }
 
       await conn.commit();
-      console.log(
-        `${username} upgrade ${character} to level ${
-          dbLevel + 1
-        } for ${price} coins`
-      );
-      return res
-        .status(200)
-        .json({ success: true, newLevel: dbLevel + 1, spent: price });
+      console.log(`${username} upgrade ${character} to level ${dbLevel + 1} for ${price} coins`);
+      return res.status(200).json({ success: true, newLevel: dbLevel + 1, spent: price });
     } catch (e) {
       await conn.rollback();
       throw e;
@@ -550,18 +572,12 @@ app.post("/upgrade", async (req, res) => {
 
 app.post("/buy", async (req, res) => {
   try {
-    const username = req.cookies.name;
+    const user = await requireCurrentUser(req, res);
+    if (!user) return res.status(401).json({ error: "Not authenticated" });
+    const username = user.name;
     const character = req.body.character;
 
-    if (!username) {
-      return res.status(401).json({ error: "Not authenticated" });
-    }
-
-    // Validate character key (or replace with a strict allow-list)
-    if (
-      typeof character !== "string" ||
-      !/^[a-zA-Z0-9_:-]{1,32}$/.test(character)
-    ) {
+    if (typeof character !== "string" || !/^[a-zA-Z0-9_:-]{1,32}$/.test(character)) {
       return res.status(400).json({ error: "Invalid character key" });
     }
 
@@ -573,18 +589,7 @@ app.post("/buy", async (req, res) => {
       return res.status(500).json({ error: "Pricing error" });
     }
 
-    // Build safe JSON path
     const jsonPath = `$.${character}`;
-
-    // Single, atomic UPDATE:
-    //  - Deduct gems
-    //  - Set the character level to 1
-    //  - Only if: gems >= price AND current level < 1 (0 or missing)
-    //
-    // Notes:
-    //  * COALESCE(char_levels, JSON_OBJECT()) ensures JSON_SET has a JSON doc to write into.
-    //  * IFNULL(CAST(JSON_UNQUOTE(JSON_EXTRACT(...)) AS UNSIGNED), 0) treats missing/null as 0.
-    //  * All values and the JSON path are parameterized to avoid injection.
     const conn = await pool.getConnection();
     try {
       const [result] = await conn.execute(
@@ -601,29 +606,19 @@ app.post("/buy", async (req, res) => {
       );
 
       if (result.affectedRows !== 1) {
-        // Could be: not enough gems, already unlocked, or user missing.
-        // Disambiguate with a quick read (optional but helpful):
         const [rows] = await conn.execute(
           `SELECT gems,
                   IFNULL(CAST(JSON_UNQUOTE(JSON_EXTRACT(char_levels, ?)) AS UNSIGNED), 0) AS lvl
            FROM users WHERE name = ?`,
           [jsonPath, username]
         );
-        if (rows.length === 0) {
-          return res.status(404).json({ error: "User not found" });
-        }
+        if (rows.length === 0) return res.status(404).json({ error: "User not found" });
         const { gems, lvl } = rows[0];
-        if (lvl >= 1) {
-          return res.status(409).json({ error: "Character already unlocked" });
-        }
-        if (Number(gems) < price) {
-          return res.status(403).json({ error: "Not enough gems" });
-        }
-        // Fallback for any other guard miss
+        if (lvl >= 1) return res.status(409).json({ error: "Character already unlocked" });
+        if (Number(gems) < price) return res.status(403).json({ error: "Not enough gems" });
         return res.status(409).json({ error: "Unlock conflict, please retry" });
       }
 
-      // Success: fetch new state to return (optional)
       const [after] = await conn.execute(
         `SELECT gems,
                 CAST(JSON_UNQUOTE(JSON_EXTRACT(char_levels, ?)) AS UNSIGNED) AS lvl
@@ -634,14 +629,7 @@ app.post("/buy", async (req, res) => {
       const newLevel = after[0]?.lvl ?? 1;
 
       console.log(`${username} unlocked ${character} for ${price} gems`);
-
-      return res.status(200).json({
-        success: true,
-        character,
-        newLevel,
-        spent: price,
-        gems: newGems,
-      });
+      return res.status(200).json({ success: true, character, newLevel, spent: price, gems: newGems });
     } finally {
       conn.release();
     }
@@ -651,579 +639,28 @@ app.post("/buy", async (req, res) => {
   }
 });
 
+// ---------------------------
 // Not found endpoint
+// ---------------------------
+
 app.use((req, res, next) => {
   return res.sendFile(path.join(__dirname, "dist", "/Errors/404.html"));
 });
 
-// Whenever a user joins, all of this will occur. This is the socket configuration for multi-player setup
-io.on("connection", (socket) => {
-  socket.on("user-joined", (data) => {
-    const party = parties[data.partyId];
-    if (!party) {
-      socket.emit("room-deleted");
-      return;
-    }
+// ---------------------------
+// Server start
+// ---------------------------
 
-    // Try to find existing member by name
-    let foundIndex = -1;
-    for (let i = 0; i < party.length; i++) {
-      const m = party[i];
-      if (m && m.name === data.name) {
-        foundIndex = i;
-        break;
-      }
-    }
-
-    if (foundIndex !== -1) {
-      // Update socketId and normalize state; allow reconnect regardless of ready flag
-      party[foundIndex].socketId = socket.id;
-      party[foundIndex].ready = false; // back to lobby by default
-      party[foundIndex].dead = false;
-      // Update character if provided
-      if (data.character || data.selectedValue) {
-        party[foundIndex].character = data.character || data.selectedValue;
-      }
-      // Ensure party-level flags reflect lobby state
-      party[0]["matchmaking"] = false;
-      party[0]["gameStarted"] = false;
-      // Notify matchmaking UI to stop if needed
-      io.emit("matchmaking-disconnect", { partyId: data.partyId });
-      // Send current party roster to this client
-      socket.emit("connection", { partyMembers: party });
-      // Inform others that this user reconnected
-      socket.broadcast.emit("user-joined", {
-        name: data.name,
-        partyId: data.partyId,
-        character: party[foundIndex].character || "ninja",
-      });
-      return;
-    }
-
-    // Not found: add a new member
-    party.push({
-      socketId: socket.id,
-      name: data.name,
-      character: data.character || data.selectedValue || "ninja",
-      ready: false,
-      dead: false,
-      team: "",
-    });
-    socket.emit("connection", { partyMembers: party });
-    socket.broadcast.emit("user-joined", {
-      name: data.name,
-      partyId: data.partyId,
-      character: data.character || data.selectedValue || "ninja",
-    });
-  });
-  // When a player joins, a message is sent to everyone else
-  socket.on("player-joined", (data) => {
-    socket.broadcast.emit("player-joined", { username: data.username });
-  });
-  // When a player moves, a message is sent to everyone else
-  socket.on("move", (data) => {
-    // Persist last known position for death animations & potential validation
-    try {
-      for (const gameId in games) {
-        const game = games[gameId];
-        for (const teamKey in game) {
-          const team = game[teamKey];
-          for (const playerKey in team) {
-            if (team[playerKey]["name"] === data.username) {
-              team[playerKey].x = data.x;
-              team[playerKey].y = data.y;
-            }
-          }
-        }
-      }
-    } catch (e) {
-      // swallow
-    }
-    socket.broadcast.emit("move", data);
-  });
-  // When a player attacks, a message is sent to everyone else
-  socket.on("attack", (data) => {
-    // Record last attack time for regen gating
-    try {
-      const attackerName = data && data.name;
-      if (attackerName) {
-        for (const gameId in games) {
-          const game = games[gameId];
-          for (const teamKey in game) {
-            const team = game[teamKey];
-            for (const idx in team) {
-              const p = team[idx];
-              if (p && p.name === attackerName) {
-                p.lastAttackAt = Date.now();
-              }
-            }
-          }
-        }
-      }
-    } catch (e) {
-      // swallow
-    }
-    socket.broadcast.emit("attack", data);
-  });
-  // Removed projectile-update/destroy (deterministic client simulation now)
-
-  // Server-authoritative health: client reports a successful hit it originated; server updates health & broadcasts
-  socket.on("hit", (data) => {
-    // data: { attacker, target, damage, gameId }
-    const { attacker, target, damage, gameId } = data;
-    if (!games[gameId]) return; // Unknown game
-    let targetPlayerObj;
-    let targetTeam;
-    for (const teamKey in games[gameId]) {
-      const team = games[gameId][teamKey];
-      for (const playerIdx in team) {
-        const p = team[playerIdx];
-        if (p.name === target) {
-          // Initialize health if not present (backwards compatibility)
-          if (typeof p.currentHealth !== "number") {
-            const max = character.CHARACTER_HEALTH[p.character];
-            p.maxHealth = max;
-            p.currentHealth = max;
-          }
-          p.currentHealth -= damage;
-          if (p.currentHealth < 0) p.currentHealth = 0;
-          // Record last time this target was hit (gates regen)
-          p.lastHitAt = Date.now();
-          targetPlayerObj = p;
-          targetTeam = team;
-        }
-      }
-    }
-    if (!targetPlayerObj) return;
-    // Broadcast new health value
-    io.emit("health-update", {
-      username: target,
-      health: targetPlayerObj.currentHealth,
-      gameId,
-    });
-
-    // If dead trigger death + game over logic
-    if (targetPlayerObj.currentHealth === 0 && targetPlayerObj.dead !== true) {
-      targetPlayerObj.dead = true;
-      // Find position if tracked
-      const deathX = targetPlayerObj.x || 0;
-      const deathY = targetPlayerObj.y || 0;
-      io.emit("death", { username: target, gameId, x: deathX, y: deathY });
-
-      // Check if entire team is dead
-      let allPlayersDead = true;
-      const losers = [];
-      for (const playerIdx in targetTeam) {
-        const p = targetTeam[playerIdx];
-        losers.push(p.name);
-        if (p.dead !== true) allPlayersDead = false;
-      }
-      if (allPlayersDead && games[gameId]) {
-        const gameParties = Object.keys(games[gameId]);
-        for (const pId of gameParties) {
-          const partyArr = parties[pId];
-          if (partyArr) {
-            // Reset party-level flags
-            partyArr[0]["gameStarted"] = false;
-            partyArr[0]["matchmaking"] = false;
-            // Normalize all members back to lobby state and set status
-            const statuses = [];
-            for (let i = 1; i < partyArr.length; i++) {
-              if (partyArr[i]) {
-                partyArr[i].ready = false;
-                partyArr[i].dead = false;
-                partyArr[i].status = "End Screen (Game Over)";
-                statuses.push({
-                  name: partyArr[i].name,
-                  status: partyArr[i].status,
-                });
-                // Also emit explicit ready reset so UIs update
-                io.emit("ready", {
-                  name: partyArr[i].name,
-                  ready: false,
-                  party: pId,
-                });
-              }
-            }
-            io.emit("status-bulk", { partyId: pId, statuses });
-          }
-        }
-        io.emit("game-over", { username: target, gameId, losers });
-        // Ensure all losers have a final health-update of 0 (in case of any missed packet)
-        losers.forEach((loser) => {
-          io.emit("health-update", { username: loser, health: 0, gameId });
-        });
-        delete games[gameId];
-      }
-    }
-  });
-  // When a player dies
-  socket.on("death", (data) => {
-    // Legacy client support: treat as hit to zero health if still alive
-    try {
-      if (!games[data.gameId]) return;
-      for (const teamKey in games[data.gameId]) {
-        const team = games[data.gameId][teamKey];
-        for (const playerKey in team) {
-          if (team[playerKey]["name"] === data.username) {
-            if (team[playerKey].dead !== true) {
-              team[playerKey].currentHealth = 0;
-              team[playerKey].dead = true;
-              io.emit("health-update", {
-                username: data.username,
-                health: 0,
-                gameId: data.gameId,
-              });
-            }
-          }
-        }
-      }
-    } catch (e) {
-      // swallow
-    }
-  });
-
-  // When a player changes character, persist on the member and broadcast
-  socket.on("character-change", (data) => {
-    const party = parties[data.partyId];
-    if (!party) return;
-    const newChar = data.selectedValue || data.character || "ninja";
-    for (let i = 1; i < party.length; i++) {
-      const m = party[i];
-      if (m && m.name === data.username) {
-        m.character = newChar;
-        break;
-      }
-    }
-    io.emit("character-change", {
-      partyId: data.partyId,
-      character: newChar,
-      username: data.username,
-    });
-  });
-
-  // When a player changes the mode, a message is sent to everyone else
-  socket.on("mode-change", (data) => {
-    parties[data.partyId][0]["mode"] = data.selectedValue; // Sets server value
-    io.emit("mode-change", {
-      partyId: data.partyId,
-      mode: data.selectedValue,
-      members: data.members,
-    });
-  });
-
-  // When a player changes the map, a message is sent to everyone else
-  socket.on("map-change", (data) => {
-    parties[data.partyId][0]["map"] = data.selectedValue; // Sets server value
-    io.emit("map-change", { partyId: data.partyId, map: data.selectedValue });
-  });
-
-  // When a player changes side, a message is sent to everyone else
-  socket.on("team-update", (data) => {
-    for (member in parties[data.partyId]) {
-      if (data.tempName === parties[data.partyId][member]["name"]) {
-        parties[data.partyId][member]["team"] = data.team; // Sets server value
-      }
-    }
-  });
-
-  // When a player drags and drops a player to another td, a message is sent to everyone else
-  socket.on("drop", (data) => {
-    socket.broadcast.emit("drop", data);
-  });
-
-  // When a player readies up, a message is sent to everyone else
-  socket.on("ready", (data) => {
-    let readyMembers = 0;
-    try {
-      if (!data.partyId || !parties[data.partyId]) {
-        // Attempt to infer partyId from username
-        for (const pid in parties) {
-          if (
-            Array.isArray(parties[pid]) &&
-            parties[pid].some((m) => m && m.name === data.username)
-          ) {
-            data.partyId = pid;
-            break;
-          }
-        }
-        if (!data.partyId || !parties[data.partyId]) {
-          return; // Still can't resolve
-        }
-      }
-      const partyArr = Array.isArray(parties[data.partyId])
-        ? parties[data.partyId]
-        : [];
-      partyArr.forEach((member) => {
-        if (data.username === member.name) {
-          member.ready = data.ready; // Sets server value
-          // If the client included character here, keep server in sync
-          if (data.character) {
-            member.character = data.character;
-          }
-          io.emit("ready", {
-            name: data.username,
-            ready: data.ready,
-            party: data.partyId,
-          });
-        }
-        if (member.ready === true) {
-          readyMembers += 1; // Adds a number to readyMembers
-        }
-      });
-      if (
-        readyMembers ===
-        Number(Object.keys(parties[data.partyId]).length) - 1 // If all members are ready besides the metadata
-      ) {
-        let players = Number(data.mode);
-        players *= 2; // The value needs to be multiplied by 2
-        if (readyMembers < players) {
-          // If the party needs to find players
-          parties[data.partyId][0]["matchmaking"] = true; // The party is now in matchmaking
-          const membersToFind = Number(parties[data.partyId][0]["mode"]) * 2;
-          const members = parties[data.partyId].length - 1;
-          io.emit("matchmaking", {
-            // Emits matchmaking message with data
-            partyId: data.partyId,
-            members,
-            membersToFind,
-          });
-        } else {
-          // If the party already has the right amount of players
-          parties[data.partyId][0]["gameStarted"] = true;
-
-          // Below code sets up the game for the team
-          let yourTeam = [];
-          let opTeam = [];
-
-          for (member in parties[data.partyId]) {
-            if (parties[data.partyId][member]["team"] === "your-team") {
-              yourTeam.push(parties[data.partyId][member]); // If team is "your-team" user is pushed to yourTeam
-            } else if (parties[data.partyId][member]["team"] === "op-team") {
-              opTeam.push(parties[data.partyId][member]); // If team is "op-team", user is pushed to opTeam
-            }
-          }
-
-          // Clones the parties
-          const party1 = cloneTeam(yourTeam);
-          const party2 = cloneTeam(opTeam);
-
-          // Clone function
-          function cloneTeam(team) {
-            const playersCopy = [];
-            for (const playerId in yourTeam) {
-              const player = team[playerId];
-
-              const playerCopy = cloneDeep(team[playerId]);
-              playersCopy.push(playerCopy);
-            }
-            return playersCopy;
-          }
-
-          // Generates a random string
-          const gameId = randomString(20);
-          games[gameId] = {};
-          games[gameId][data.partyId] = party1; // This key is set to the partyid. This is so that gamestarted can be set to false when the game is over. See death socket comment.
-          games[gameId]["Party 2"] = party2; // This key is set to "Party 2"
-
-          // Array to pick a random party
-          const array = [party1, party2];
-          const randomParty = array[Math.floor(Math.random() * array.length)]; // Picks a random party
-
-          // Sets the spawns if the party that was picked is party1
-          if (randomParty === party1) {
-            setSpawnProperties(party1, "top");
-            setSpawnProperties(party2, "bottom");
-          } else {
-            // Sets the spawns if the party that was picked is party2
-            setSpawnProperties(party1, "bottom");
-            setSpawnProperties(party2, "top");
-          }
-
-          // Initialize health for all players based on their chosen character
-          initGameHealth(games[gameId]);
-
-          const map = parties[data.partyId][0]["map"];
-          // Broadcast In Battle status for direct start
-          try {
-            const pArr = parties[data.partyId];
-            if (Array.isArray(pArr)) {
-              const statuses = [];
-              for (let i = 1; i < pArr.length; i++) {
-                const m = pArr[i];
-                if (m && m.name) {
-                  m.status = "In Battle";
-                  statuses.push({ name: m.name, status: m.status });
-                }
-              }
-              io.emit("status-bulk", { partyId: data.partyId, statuses });
-            }
-          } catch (e) {}
-          // Emits game started
-          io.emit("game-started", {
-            partyId: data.partyId,
-            gameId,
-            gameData: games[gameId],
-            partyMembers: games[gameId][data.partyId].length,
-            map,
-          });
-        }
-      } else {
-        // If not all members are ready, the variables are set to false just in case they are true
-        parties[data.partyId][0]["matchmaking"] = false;
-        parties[data.partyId][0]["gameStarted"] = false;
-      }
-    } catch (error) {
-      // swallow
-    }
-  });
-
-  // When a player disconnects
-  socket.on("disconnect", () => {
-    let playerName;
-    let partyIdToRemove;
-
-    for (const partyId in parties) {
-      const disconnectedPlayer = parties[partyId].find(
-        // Finds player by socket id
-        (player) => player.socketId === socket.id
-      );
-      if (
-        disconnectedPlayer &&
-        parties[partyId][0]["matchmaking"] !== true && // If the party was not in matchmaking for game started. This is because the player disonnects when going into matchmaking and the game.
-        parties[partyId][0]["gameStarted"] !== true
-      ) {
-        playerName = disconnectedPlayer.name;
-        socket.broadcast.emit("user-disconnected", {
-          // Emits a message to all other users that the player disonnected
-          name: playerName,
-          partyId,
-        });
-        parties[partyId] = parties[partyId].filter(
-          (player) => player.socketId !== socket.id
-        );
-
-        if (parties[partyId].length === 1) {
-          // If the party is empty (besides the metadata)
-          partyIdToRemove = partyId;
-          setTimeout(() => {
-            if (
-              parties[partyIdToRemove] &&
-              parties[partyIdToRemove].length === 1 // If the party is still empty after 20 seconds
-            ) {
-              delete parties[partyIdToRemove]; // The party is deleted after 20 seconds of inactivity.
-            }
-          }, 20000);
-        }
-        break;
-      }
-    }
-  });
-});
-
-// Server-authoritative health regeneration loop
-setInterval(() => {
-  try {
-    const now = Date.now();
-    for (const gameId in games) {
-      const game = games[gameId];
-      for (const teamKey in game) {
-        const team = game[teamKey];
-        for (const idx in team) {
-          const p = team[idx];
-          if (!p || p.dead === true) continue;
-          // Initialize health fields if missing
-          if (typeof p.maxHealth !== "number") {
-            p.maxHealth = CHARACTER_HEALTH[p.character];
-          }
-          if (typeof p.currentHealth !== "number") {
-            p.currentHealth = p.maxHealth;
-          }
-          if (p.currentHealth <= 0 || p.currentHealth >= p.maxHealth) continue;
-          const lastAtk =
-            typeof p.lastAttackAt === "number" ? p.lastAttackAt : 0;
-          const lastHit = typeof p.lastHitAt === "number" ? p.lastHitAt : 0;
-          // Must satisfy both idle windows: 3s since last attack, 4s since last hit
-          if (now - lastAtk < REGEN_IDLE_DELAY_MS) continue;
-          if (now - lastHit < REGEN_HIT_IDLE_DELAY_MS) continue;
-          const missing = Math.max(0, p.maxHealth - p.currentHealth);
-          const scaled = Math.floor(missing * REGEN_MISSING_FRACTION_PER_TICK);
-          const rawDelta = Math.max(REGEN_MIN_PER_TICK, scaled);
-          // Quantize to friendly steps of 50
-          const friendlyDelta = Math.max(
-            REGEN_FRIENDLY_STEP,
-            Math.round(rawDelta / REGEN_FRIENDLY_STEP) * REGEN_FRIENDLY_STEP
-          );
-          const deltaHp = Math.min(friendlyDelta, missing);
-          const newHealth = Math.min(p.maxHealth, p.currentHealth + deltaHp);
-          if (newHealth !== p.currentHealth) {
-            p.currentHealth = newHealth;
-            io.emit("health-update", {
-              username: p.name,
-              health: p.currentHealth,
-              gameId,
-            });
-          }
-        }
-      }
-    }
-  } catch (e) {
-    // swallow
-  }
-}, REGEN_TICK_MS);
-
-// Start the server
 async function startServer() {
   try {
     await pool.query("SELECT 1");
     console.log("✅ Database connected");
     server.listen(port, () => {
-      console.log(`Server is listening at http://localhost:${port}`); // Sets up the server to listen on port 3000
+      console.log(`Server is listening at http://localhost:${port}`);
     });
   } catch (error) {
     console.error("❌ Failed to connect to the database:", error);
-    process.exit(1); // Exit the process with an error code
+    process.exit(1);
   }
 }
 startServer();
-
-// Random string (see credits at the very top for thanks for this code)
-function randomString(length, numbersOnly = false) {
-  let letters;
-  if (numbersOnly) {
-    letters = "0123456789";
-  } else {
-    letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-  }
-  let string = "";
-  const charactersLength = letters.length;
-
-  for (let i = 0; i < length; i++) {
-    string += letters.charAt(Math.floor(Math.random() * charactersLength));
-  }
-
-  return string;
-}
-
-// Clone players function that is used in matchmaking
-function clonePlayers(partyId) {
-  const playersCopy = [];
-  for (const playerId in parties[partyId]) {
-    const player = parties[partyId][playerId];
-    if (!player.hasOwnProperty("mode")) {
-      // Skip the party metadata
-      const playerCopy = cloneDeep(parties[partyId][playerId]); // Clones each member and adds them to playersCopy
-      playersCopy.push(playerCopy);
-    }
-  }
-  return playersCopy;
-}
-
-// Sets spawn points for each player
-function setSpawnProperties(players, spawnPlatform) {
-  let spawnCounter = 1;
-  for (const player of players) {
-    player["spawnPlatform"] = spawnPlatform;
-    player["spawn"] = spawnCounter++; // Spawn counter is used to figure out where to place the user in game.js
-  }
-}

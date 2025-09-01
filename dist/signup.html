@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Create Account</title>
+    <link rel="shortcut icon" href="/assets/sword.svg" type="image/x-icon" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Poppins:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&family=Press+Start+2P&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <div class="container">
+      <div class="auth-card">
+        <h1>Create Account</h1>
+        <p class="subtitle">Join the battle and save your progress</p>
+
+        <div class="guest-info">
+          <p>
+            All progress from guest account
+            <span class="guest-name" id="guestName">Guest</span> will be saved
+            to this account.
+          </p>
+        </div>
+
+        <form id="signupForm">
+          <div class="form-group">
+            <label for="username" class="form-label">Username</label>
+            <input
+              type="text"
+              id="username"
+              name="username"
+              class="form-input"
+              placeholder="Unique and seen by others"
+              autocomplete="username"
+              required
+            />
+          </div>
+
+          <div class="form-group">
+            <label for="password" class="form-label">Password</label>
+            <input
+              type="password"
+              id="password"
+              name="password"
+              class="form-input"
+              placeholder="Choose a secure password"
+              autocomplete="new-password"
+              required
+            />
+          </div>
+
+          <button type="submit" class="auth-button" id="signupBtn">
+            <div class="button-content">
+              <div class="loading" id="loading"></div>
+              <span id="buttonText">Create Account</span>
+            </div>
+          </button>
+
+          <div class="error-message" id="errorMessage"></div>
+        </form>
+
+        <div class="link-section">
+          <a href="/login" class="auth-link">Already have an account? Login</a>
+          <a href="/" class="back-link">← Back to lobby</a>
+        </div>
+      </div>
+    </div>
+    <script src="/signup.bundle.js"></script>
+  </body>
+</html>

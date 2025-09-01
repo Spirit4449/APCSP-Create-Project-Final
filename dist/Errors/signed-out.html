@@ -5,7 +5,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Welcome</title>
+    <title>Signed out</title>
     <link rel="shortcut icon" href="/assets/sword.svg" type="image/x-icon" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -38,7 +38,7 @@
         flex-direction: column;
       }
 
-      #submitButton {
+      .text {
         background-color: #4bccff;
         cursor: pointer;
         transition: background-color 0.4s ease;
@@ -47,8 +47,10 @@
         border: 3px solid black;
         border-radius: 8px;
         font-size: 20px;
+        width: 15%;
+        margin-bottom: 10px;
       }
-      #submitButton:hover {
+       .text:hover {
         background-color: #2ea1cf;
       }
     </style>
@@ -56,13 +58,35 @@
   <body>
     <div class="container">
       <h1>You signed out</h1>
-    <button type="submit" id="submitButton" class="text" onclick="returnHome()">Return home</button>
+      <button
+        type="submit"
+        id="submitButton"
+        class="text"
+        onclick="navigate('/')"
+      >
+        Return home
+      </button>
+      <button type="submit" class="text" onclick="navigate('/login')">Login</button>
+      <button type="submit" class="text" onclick="navigate('/signup')">Signup</button>
     </div>
 
     <script>
-        function returnHome() {
-            window.location.href = '/'
-        }
+      fetch("/logout", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        credentials: "same-origin",
+      })
+        .then((response) => response.json())
+        .then((data) => {})
+        .catch((error) => {
+          console.error("Error:", error);
+        });
+
+      function navigate(url) {
+        window.location.href = url;
+      }
     </script>
   </body>
 </html>
