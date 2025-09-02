@@ -1,11 +1,11 @@
 import { setLobbyBackground, sonner } from "./lib/sonner.js";
-import { checkIfInParty, createParty } from "./party.js";
+import { checkIfInParty, createParty, leaveParty, socketInit } from "./party.js";
 import {
   initializeCharacterSelect,
   openCharacterSelect,
 } from "./characterLogic.js";
 import "./styles/characterSelect.css";
-import "./styles/index.css";
+// import "./styles/index.css";
 import "./styles/sonner.css";
 
 let userData = null;
@@ -59,15 +59,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   const coinCount = document.getElementById("coin-count");
   const gemCount = document.getElementById("gem-count");
 
-  const partyId = checkIfInParty();
-  // if (partyId) {
-  //   socket.emit("user-joined", {
-  //     name: userData.name,
-  //     partyId,
-  //     character: userData.char_class,
-  //   });
-  // }
-
   document.getElementById("username-text").textContent = userData.name;
   setLobbyBackground("1");
   characterBodyElement.src = `/assets/${userData.char_class}/body.png`;
@@ -77,9 +68,16 @@ document.addEventListener("DOMContentLoaded", async () => {
   characterSelect.addEventListener("click", openCharacterSelect);
   initializeCharacterSelect(userData);
 
-  createPartyButton.addEventListener("click", () => {
-    createParty();
-  });
+
+  if (existingPartyId) {
+    createPartyButton.textContent = "Leave Party";
+    createPartyButton.style.background = "linear-gradient(135deg, #d63939, #cf4545)";
+    createPartyButton.addEventListener("click", leaveParty);
+
+    socketInit(); // Initialize all socket events
+  } else {
+    createPartyButton.addEventListener("click", createParty);
+  }
 });
 
 function signUpOut(guest) {

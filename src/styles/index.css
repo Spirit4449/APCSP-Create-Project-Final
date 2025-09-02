@@ -1,6 +1,6 @@
 body {
   margin: 0;
-  background-image: url("../../dist/assets/Lushy/lobbyBg.jpg");
+  background-image: url("/dist/assets/Lushy/lobbyBg.jpg");
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
@@ -498,7 +498,7 @@ h3 {
   background: linear-gradient(135deg, #bb773c, #a2642a);
 }
 
-#create-party {
+.party-button {
   position: fixed;
   top: 80px;
   left: 20px;
@@ -517,7 +517,7 @@ h3 {
   transition: all 0.3s ease;
   box-shadow: 0 4px 15px rgba(255, 71, 87, 0.4);
 }
-#create-party:hover {
+.party-button:hover {
   background: linear-gradient(135deg, #7356f7, #9e50e3);
   box-shadow: 0 6px 20px rgba(255, 71, 87, 0.6);
   transform: translateY(-2px);

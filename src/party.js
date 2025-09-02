@@ -1,6 +1,7 @@
+import { create } from "lodash";
 import { sonner } from "./lib/sonner.js";
+import socket from "./socket";
 
-const socket = io("/");
 
 export function checkIfInParty() {
   const pathname = window.location.pathname;
@@ -24,6 +25,43 @@ export function createParty() {
     .catch((error) => {
       console.error("Error:", error);
     });
+}
+
+export function leaveParty() {
+  fetch("/leave-party", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+  })
+    .then((response) => response.json())
+    .then((data) => {
+      console.log(data);
+      window.location.href = `/`;
+    })
+    .catch((error) => {
+      console.error("Error:", error);
+    });
+}
+
+// Socket heartbeat
+let hbTimer;
+export function startHeartbeat(partyId) {
+  clearInterval(hbTimer);
+  if (!partyId) return;
+  hbTimer = setInterval(() => socket.emit("heartbeat", partyId), 20000);
+}
+export function stopHeartbeat() { clearInterval(hbTimer); }
+
+// ---------------------------
+// Socket
+// ---------------------------
+
+export function socketInit() {
+  // Emits
+
+
+  // Listeners
 }
 
 // party.addEventListener("click", (event) => {
