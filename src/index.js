@@ -1,11 +1,16 @@
 import { setLobbyBackground, sonner } from "./lib/sonner.js";
-import { checkIfInParty, createParty, leaveParty, socketInit } from "./party.js";
+import {
+  checkIfInParty,
+  createParty,
+  leaveParty,
+  socketInit,
+} from "./party.js";
 import {
   initializeCharacterSelect,
   openCharacterSelect,
 } from "./characterLogic.js";
 import "./styles/characterSelect.css";
-// import "./styles/index.css";
+import "./styles/index.css";
 import "./styles/sonner.css";
 
 let userData = null;
@@ -68,10 +73,10 @@ document.addEventListener("DOMContentLoaded", async () => {
   characterSelect.addEventListener("click", openCharacterSelect);
   initializeCharacterSelect(userData);
 
-
   if (existingPartyId) {
     createPartyButton.textContent = "Leave Party";
-    createPartyButton.style.background = "linear-gradient(135deg, #d63939, #cf4545)";
+    createPartyButton.style.background =
+      "linear-gradient(135deg, #d63939, #cf4545)";
     createPartyButton.addEventListener("click", leaveParty);
 
     socketInit(); // Initialize all socket events

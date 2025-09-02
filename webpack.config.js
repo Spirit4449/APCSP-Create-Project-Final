@@ -1,5 +1,7 @@
 // webpack.config.js
 const path = require("path");
+const MiniCssExtractPlugin = require("mini-css-extract-plugin");
+const CopyWebpackPlugin = require("copy-webpack-plugin");
 
 module.exports = {
   entry: {
@@ -12,8 +14,9 @@ module.exports = {
     login: "./src/login.js",
   },
   output: {
-    filename: "[name].bundle.js",
+    filename: "bundles/[name].bundle.js",
     path: path.resolve(__dirname, "dist"),
+    publicPath: "/",
   },
   mode: "development",
   devtool: "inline-source-map",
@@ -36,8 +39,34 @@ module.exports = {
       },
       {
         test: /\.css$/,
-        use: ["style-loader", "css-loader"],
+        use: [
+          // Extract CSS into real files instead of injecting via JS to avoid FOUC
+          MiniCssExtractPlugin.loader,
+          {
+            loader: "css-loader",
+            options: {
+              url: false,
+              importLoaders: 1,
+              sourceMap: true,
+            },
+          },
+        ],
       },
     ],
   },
+  plugins: [
+    new MiniCssExtractPlugin({
+      filename: "bundles/[name].css",
+      chunkFilename: "bundles/[id].css",
+    }),
+    new CopyWebpackPlugin({
+      patterns: [
+        {
+          from: path.resolve(__dirname, "public"),
+          to: path.resolve(__dirname, "dist"),
+          noErrorOnMissing: true,
+        },
+      ],
+    }),
+  ],
 };

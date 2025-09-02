@@ -1,6 +1,7 @@
 body {
   margin: 0;
-  background-image: url("/dist/assets/Lushy/lobbyBg.jpg");
+  /* Use root-relative path served by Express/DevServer static from dist */
+  background-image: url("/assets/Lushy/lobbyBg.jpg");
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
@@ -99,7 +100,7 @@ h3 {
 /* Visual platform image placed as a separate element to stack vertically */
 .platform-image {
   width: 100%;
-  background-image: url("/dist/assets/lobbyPlatform.png");
+  background-image: url("/assets/lobbyPlatform.png");
   background-size: contain;
   background-repeat: no-repeat;
   background-position: center bottom;
