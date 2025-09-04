@@ -40,10 +40,15 @@ const port = 3002;
 // ---------------------------
 const IS_PROD = process.env.NODE_ENV === "production";
 const COOKIE_SECRET =
-  process.env.COOKIE_SECRET ||
+  "process.env.COOKIE_SECRET" ||
   `dev-insecure-${Math.random().toString(36).slice(2)}-${Date.now()}`;
 
-const SIGNED_COOKIE_OPTS = { httpOnly: true, sameSite: "lax", secure: IS_PROD, signed: true };
+const SIGNED_COOKIE_OPTS = {
+  httpOnly: true,
+  sameSite: "lax",
+  secure: IS_PROD,
+  signed: true,
+};
 const DISPLAY_COOKIE_OPTS = { sameSite: "lax", secure: IS_PROD };
 
 app.use(express.json());
@@ -53,16 +58,58 @@ app.use(cookieParser(COOKIE_SECRET));
 // Webpack dev (as you had)
 const config = require("./webpack.config.js");
 const compiler = webpack(config);
-app.use(webpackDevMiddleware(compiler, { publicPath: config.output.publicPath, serverSideRender: false }));
+app.use(
+  webpackDevMiddleware(compiler, {
+    publicPath: config.output.publicPath,
+    serverSideRender: false,
+  })
+);
 app.use(webpackHotMiddleware(compiler));
 app.use(express.static(path.join(__dirname, "dist")));
 
 // ---------------------------
 // Helpers (users & cookies)
 // ---------------------------
+// Small party helpers to avoid repetition
+async function selectPartyById(partyId) {
+  const [rows] = await pool.query(
+    "SELECT * FROM parties WHERE party_id = ? LIMIT 1",
+    [partyId]
+  );
+  return rows?.[0] || null;
+}
+
+async function emitRoster(partyId, party, members) {
+  io.to(`party:${partyId}`).emit("party:members", {
+    partyId,
+    mode: party.mode,
+    map: party.map,
+    members,
+  });
+}
+
+// Delete party if no members remain; otherwise broadcast current roster.
+// Returns true if the party was deleted, false otherwise.
+async function updateOrDeleteParty(partyId) {
+  const members = await fetchPartyMembersDetailed(partyId);
+  const party = await selectPartyById(partyId);
+  if (!party) return true; // already gone
+  if (!members || members.length === 0) {
+    await runQuery("DELETE FROM parties WHERE party_id = ?", [partyId]);
+    return true;
+  }
+  await emitRoster(partyId, party, members);
+  return false;
+}
+
 function randomString(length, numbersOnly = false) {
-  const letters = numbersOnly ? "0123456789" : "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-  return Array.from({ length }, () => letters[Math.floor(Math.random() * letters.length)]).join("");
+  const letters = numbersOnly
+    ? "0123456789"
+    : "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  return Array.from(
+    { length },
+    () => letters[Math.floor(Math.random() * letters.length)]
+  ).join("");
 }
 
 async function createGuestAndSetCookies(res) {
@@ -72,21 +119,40 @@ async function createGuestAndSetCookies(res) {
 
   const result = await runQuery(
     "INSERT INTO users (name, char_class, status, expires_at, char_levels) VALUES (?, ?, ?, ?, ?)",
-    [guestName, DEFAULT_CHARACTER, "lobby", new Date(expiresAtMs), charLevelsJson]
+    [
+      guestName,
+      DEFAULT_CHARACTER,
+      "online",
+      new Date(expiresAtMs),
+      charLevelsJson,
+    ]
   );
   const userId = result.insertId;
-  const rows = await runQuery("SELECT * FROM users WHERE user_id = ? LIMIT 1", [userId]);
+  const rows = await runQuery("SELECT * FROM users WHERE user_id = ? LIMIT 1", [
+    userId,
+  ]);
   const user = rows[0];
 
-  res.cookie("user_id", String(userId), { ...SIGNED_COOKIE_OPTS, maxAge: 1000 * 60 * 60 * 24 * 30 });
-  res.cookie("display_name", user.name, { ...DISPLAY_COOKIE_OPTS, expires: new Date(expiresAtMs) });
+  res.cookie("user_id", String(userId), {
+    ...SIGNED_COOKIE_OPTS,
+    maxAge: 1000 * 60 * 60 * 24 * 30,
+  });
+  res.cookie("display_name", user.name, {
+    ...DISPLAY_COOKIE_OPTS,
+    expires: new Date(expiresAtMs),
+  });
+
+  console.log(`[auth] Guest ${guestName} created with ID ${userId}`);
   return user;
 }
 
 async function getOrCreateCurrentUser(req, res, { autoCreate = true } = {}) {
   const id = req.signedCookies?.user_id;
   if (id) {
-    const rows = await runQuery("SELECT * FROM users WHERE user_id = ? LIMIT 1", [id]);
+    const rows = await runQuery(
+      "SELECT * FROM users WHERE user_id = ? LIMIT 1",
+      [id]
+    );
     if (rows.length > 0) return rows[0];
   }
   if (!autoCreate) return null;
@@ -96,10 +162,14 @@ async function getOrCreateCurrentUser(req, res, { autoCreate = true } = {}) {
 async function requireCurrentUser(req, res) {
   const id = req.signedCookies?.user_id;
   if (!id) return null;
-  const rows = await runQuery("SELECT * FROM users WHERE user_id = ? LIMIT 1", [id]);
+  const rows = await runQuery("SELECT * FROM users WHERE user_id = ? LIMIT 1", [
+    id,
+  ]);
   return rows[0] || null;
 }
-function isGuest(userRow) { return userRow?.expires_at !== null && userRow?.expires_at !== undefined; }
+function isGuest(userRow) {
+  return userRow?.expires_at !== null && userRow?.expires_at !== undefined;
+}
 
 // ---------------------------
 // Capacity helper
@@ -137,25 +207,46 @@ app.get("/login", (req, res) => {
 app.get("/", async (req, res) => {
   try {
     const user = await getOrCreateCurrentUser(req, res, { autoCreate: true });
-    const rows = await runQuery("SELECT party_id FROM party_members WHERE name = ? LIMIT 1", [user?.name]);
+    const rows = await runQuery(
+      "SELECT party_id FROM party_members WHERE name = ? LIMIT 1",
+      [user?.name]
+    );
     if (rows.length) return res.redirect(`/party/${rows[0].party_id}`);
-  } catch (e) { console.error(e); }
+  } catch (e) {
+    console.error(e);
+  }
   res.sendFile(path.join(__dirname, "dist", "index.html"));
 });
 
 app.get("/party/:partyid", async (req, res) => {
   try {
-    const rows = await runQuery("SELECT 1 FROM parties WHERE party_id = ? LIMIT 1", [req.params.partyid]);
-    if (!rows.length) return res.sendFile(path.join(__dirname, "dist", "/Errors/partynotfound.html"));
-  } catch (e) { console.error(e); }
+    const rows = await runQuery(
+      "SELECT 1 FROM parties WHERE party_id = ? LIMIT 1",
+      [req.params.partyid]
+    );
+    if (!rows.length)
+      return res.sendFile(
+        path.join(__dirname, "dist", "/Errors/partynotfound.html")
+      );
+  } catch (e) {
+    console.error(e);
+  }
   res.sendFile(path.join(__dirname, "dist", "index.html"));
 });
 
 app.post("/status", async (req, res) => {
   try {
     const user = await getOrCreateCurrentUser(req, res, { autoCreate: true });
-    const partyRows = await runQuery("SELECT party_id FROM party_members WHERE name = ? LIMIT 1", [user.name]);
-    res.json({ success: true, userData: user, guest: isGuest(user), party_id: partyRows[0]?.party_id ?? null });
+    const partyRows = await runQuery(
+      "SELECT party_id FROM party_members WHERE name = ? LIMIT 1",
+      [user.name]
+    );
+    res.json({
+      success: true,
+      userData: user,
+      guest: isGuest(user),
+      party_id: partyRows[0]?.party_id ?? null,
+    });
   } catch (e) {
     console.error(e);
     res.status(500).json({ success: false, message: "Internal server error" });
@@ -165,9 +256,17 @@ app.post("/status", async (req, res) => {
 app.get("/me", async (req, res) => {
   try {
     const user = await requireCurrentUser(req, res);
-    if (!user) return res.json({ authenticated: false, name: "Guest", isGuest: true });
-    res.json({ authenticated: true, name: user.name, isGuest: isGuest(user), userId: user.user_id });
-  } catch (e) { res.json({ authenticated: false, name: "Guest", isGuest: true }); }
+    if (!user)
+      return res.json({ authenticated: false, name: "Guest", isGuest: true });
+    res.json({
+      authenticated: true,
+      name: user.name,
+      isGuest: isGuest(user),
+      userId: user.user_id,
+    });
+  } catch (e) {
+    res.json({ authenticated: false, name: "Guest", isGuest: true });
+  }
 });
 
 app.post("/create-party", async (req, res) => {
@@ -179,16 +278,24 @@ app.post("/create-party", async (req, res) => {
     await runQuery("START TRANSACTION");
     await runQuery("DELETE FROM party_members WHERE name = ?", [username]);
     const { insertId: partyId } = await runQuery(
-      "INSERT INTO parties (status, mode, map) VALUES (?, ?, ?)", ["lobby", 1, 1]
+      "INSERT INTO parties (status, mode, map) VALUES (?, ?, ?)",
+      ["lobby", 1, 1]
     );
-    await runQuery("INSERT INTO party_members (party_id, name, team) VALUES (?, ?, ?)",
-      [partyId, username, "team1"]);
+    await runQuery(
+      "INSERT INTO party_members (party_id, name, team) VALUES (?, ?, ?)",
+      [partyId, username, "team1"]
+    );
     await runQuery("COMMIT");
 
+    console.log(`[party] Party ${partyId} created by ${username}`);
     res.status(201).json({ partyId });
   } catch (err) {
-    try { await runQuery("ROLLBACK"); } catch {}
-    if (err?.code === "ER_DUP_ENTRY") return res.status(409).json({ error: "Duplicate membership" });
+    try {
+      await runQuery("ROLLBACK");
+    } catch {}
+    console.error(`[party] Failed to create party:`, err.message);
+    if (err?.code === "ER_DUP_ENTRY")
+      return res.status(409).json({ error: "Duplicate membership" });
     res.status(500).json({ error: "Failed to create party" });
   }
 });
@@ -201,68 +308,103 @@ app.post("/partydata", async (req, res) => {
   const partyId = req.body?.partyId;
   if (!partyId) return res.status(400).json({ error: "partyId is required" });
 
-  try { await updateLastSeen(partyId, username); } catch {}
+  try {
+    await updateLastSeen(partyId, username);
+  } catch {}
 
   let conn;
   try {
     conn = await pool.getConnection();
     await conn.beginTransaction();
 
-    const [partyRows] = await conn.query("SELECT * FROM parties WHERE party_id = ? FOR UPDATE", [partyId]);
+    const [partyRows] = await conn.query(
+      "SELECT * FROM parties WHERE party_id = ? FOR UPDATE",
+      [partyId]
+    );
     if (!partyRows.length) {
       await conn.rollback();
-      return res.status(404).sendFile(path.join(__dirname, "dist/Errors", "partynotfound.html"));
+      return res
+        .status(404)
+        .sendFile(path.join(__dirname, "dist/Errors", "partynotfound.html"));
     }
     const party = partyRows[0];
-    const { total: totalCap, perTeam: perTeamCap } = capacityFromMode(party.mode);
+    const { total: totalCap, perTeam: perTeamCap } = capacityFromMode(
+      party.mode
+    );
 
     const [existing] = await conn.query(
-      "SELECT team FROM party_members WHERE party_id = ? AND name = ? LIMIT 1", [partyId, username]
+      "SELECT team FROM party_members WHERE party_id = ? AND name = ? LIMIT 1",
+      [partyId, username]
     );
 
     if (!existing.length) {
       const [[{ cnt: currentCount }]] = await conn.query(
-        "SELECT COUNT(*) AS cnt FROM party_members WHERE party_id = ? FOR UPDATE", [partyId]
+        "SELECT COUNT(*) AS cnt FROM party_members WHERE party_id = ? FOR UPDATE",
+        [partyId]
       );
       if (currentCount >= totalCap) {
         await conn.rollback();
-        return res.status(409).sendFile(path.join(__dirname, "dist/Errors", "partyfull.html"));
+        console.log(
+          `[party] ${username} rejected from party ${partyId} - full (${currentCount}/${totalCap})`
+        );
+        return res.status(409).json({
+          error: "Party is full",
+          redirect: "/partyfull",
+        });
       }
 
       const [teamCounts] = await conn.query(
         "SELECT team, COUNT(*) AS c FROM party_members WHERE party_id = ? GROUP BY team FOR UPDATE",
         [partyId]
       );
-      const map = new Map(teamCounts.map(r => [r.team, Number(r.c)]));
+      const map = new Map(teamCounts.map((r) => [r.team, Number(r.c)]));
       const team1Count = map.get("team1") || 0;
       const team2Count = map.get("team2") || 0;
 
       let chosen = team1Count > team2Count ? "team2" : "team1";
-      if ((chosen === "team1" && team1Count >= perTeamCap) ||
-          (chosen === "team2" && team2Count >= perTeamCap)) {
+      if (
+        (chosen === "team1" && team1Count >= perTeamCap) ||
+        (chosen === "team2" && team2Count >= perTeamCap)
+      ) {
         chosen = chosen === "team1" ? "team2" : "team1";
       }
-      if ((chosen === "team1" && team1Count >= perTeamCap) ||
-          (chosen === "team2" && team2Count >= perTeamCap)) {
+      if (
+        (chosen === "team1" && team1Count >= perTeamCap) ||
+        (chosen === "team2" && team2Count >= perTeamCap)
+      ) {
         await conn.rollback();
-        return res.status(409).sendFile(path.join(__dirname, "dist/Errors", "partyfull.html"));
+        return res.status(409).json({
+          error: "Party is full",
+          redirect: "/partyfull",
+        });
       }
 
-      await conn.query("DELETE FROM party_members WHERE name = ? AND party_id <> ?", [username, partyId]);
+      await conn.query(
+        "DELETE FROM party_members WHERE name = ? AND party_id <> ?",
+        [username, partyId]
+      );
       try {
         await conn.query(
           "INSERT INTO party_members (party_id, name, team, joined_at) VALUES (?, ?, ?, NOW())",
           [partyId, username, chosen]
         );
+        console.log(`[party] ${username} joined party ${partyId} on ${chosen}`);
       } catch (e) {
         if (!(e && e.code === "ER_DUP_ENTRY")) {
           await conn.rollback();
           return res.status(500).json({ error: "Could not join party" });
         }
       }
+    } else {
+      console.log(
+        `[party] ${username} already in party ${partyId}, updating last_seen`
+      );
     }
 
-    await conn.query("UPDATE party_members SET last_seen = NOW() WHERE party_id = ? AND name = ?", [partyId, username]);
+    await conn.query(
+      "UPDATE party_members SET last_seen = NOW() WHERE party_id = ? AND name = ?",
+      [partyId, username]
+    );
 
     const [memberRows] = await conn.query(
       `SELECT pm.name, pm.team, u.char_class, u.status
@@ -285,12 +427,21 @@ app.post("/partydata", async (req, res) => {
       members: memberRows,
     });
 
-    res.json({ party, capacity: { total: totalCap, perTeam: perTeamCap }, members: memberRows, viewer: username });
+    res.json({
+      party,
+      capacity: { total: totalCap, perTeam: perTeamCap },
+      members: memberRows,
+      viewer: username,
+    });
   } catch (err) {
-    try { if (conn) await conn.rollback(); } catch {}
+    try {
+      if (conn) await conn.rollback();
+    } catch {}
     console.error("POST /partydata", err);
     res.status(500).json({ error: "Internal error" });
-  } finally { if (conn) conn.release(); }
+  } finally {
+    if (conn) conn.release();
+  }
 });
 
 app.post("/leave-party", async (req, res) => {
@@ -301,34 +452,28 @@ app.post("/leave-party", async (req, res) => {
 
     let partyId = req.body?.partyId;
     if (!partyId) {
-      const rows = await runQuery("SELECT party_id FROM party_members WHERE name = ? LIMIT 1", [username]);
-      if (!rows.length) return res.json({ success: true, left: false, deleted: false });
+      const rows = await runQuery(
+        "SELECT party_id FROM party_members WHERE name = ? LIMIT 1",
+        [username]
+      );
+      if (!rows.length)
+        return res.json({ success: true, left: false, deleted: false });
       partyId = rows[0].party_id;
     }
 
-    const del = await runQuery("DELETE FROM party_members WHERE party_id = ? AND name = ?", [partyId, username]);
-    if (!del?.affectedRows) return res.json({ success: true, left: false, deleted: false });
-
-    const remaining = await runQuery("SELECT 1 FROM party_members WHERE party_id = ? LIMIT 1", [partyId]);
-    let deleted = false;
-    if (!remaining.length) {
-      const delParty = await runQuery("DELETE FROM parties WHERE party_id = ?", [partyId]);
-      deleted = !!delParty && delParty.affectedRows === 1;
-    }
+    const del = await runQuery(
+      "DELETE FROM party_members WHERE party_id = ? AND name = ?",
+      [partyId, username]
+    );
+    if (!del?.affectedRows)
+      return res.json({ success: true, left: false, deleted: false });
 
     await socketApi.moveUserSocketToLobby(username);
 
-    if (!deleted) {
-      const members = await fetchPartyMembersDetailed(partyId);
-      const [partyRows] = await pool.query("SELECT * FROM parties WHERE party_id = ? LIMIT 1", [partyId]);
-      io.to(`party:${partyId}`).emit("party:members", {
-        partyId,
-        mode: partyRows?.[0]?.mode,
-        map: partyRows?.[0]?.map,
-        members,
-      });
-    }
-
+    const deleted = await updateOrDeleteParty(partyId);
+    console.log(
+      `[party] ${username} left party ${partyId}, party deleted: ${deleted}`
+    );
     res.json({ success: true, left: true, deleted });
   } catch (e) {
     console.error("/leave-party", e);
@@ -543,7 +688,9 @@ app.post("/upgrade", async (req, res) => {
       await conn.commit();
 
       console.log(
-        `${username} upgrade ${character} to level ${dbLevel + 1} for ${price} coins`
+        `${username} upgrade ${character} to level ${
+          dbLevel + 1
+        } for ${price} coins`
       );
       return res
         .status(200)
@@ -674,9 +821,92 @@ const socketApi = initSocket({
   try {
     await pool.query("SELECT 1");
     console.log("✅ Database connected");
-    server.listen(port, () => console.log(`Server listening at http://localhost:${port}`));
+    server.listen(port, () =>
+      console.log(`Server listening at http://localhost:${port}`)
+    );
   } catch (e) {
     console.error("❌ Failed to connect to DB:", e);
     process.exit(1);
   }
 })();
+
+// ---------------------------
+// Inactive member cleanup (every 30 minutes)
+// Removes party members whose last_seen is older than 30 minutes,
+// deletes empty parties, and broadcasts updated rosters to remaining members.
+// ---------------------------
+async function cleanupInactiveMembers() {
+  try {
+    // Remove members not seen in the last 30 minutes
+    const removed = await dbInject.findAndRemoveInactiveMembers(30);
+
+    // Group removed by party (if any)
+    const byParty = new Map();
+    for (const row of removed) {
+      const list = byParty.get(row.party_id) || [];
+      list.push(row.name);
+      byParty.set(row.party_id, list);
+    }
+
+    // Log summary of removals
+    for (const [partyId, names] of byParty.entries()) {
+      console.log(
+        `[inactive] Removed ${
+          names.length
+        } member(s) from party ${partyId}: ${names.join(", ")}`
+      );
+    }
+
+    console.log(`[cleanup] Processing ${byParty.size} affected parties`);
+    for (const [partyId] of byParty.entries()) {
+      // Update roster or delete party if empty
+      await updateOrDeleteParty(partyId);
+    }
+    // Sweep any other empty parties that might exist
+    try {
+      const count = await dbInject.deleteEmptyParties();
+      if (count && count > 0) {
+        console.log(`[inactive] Deleted ${count} empty parties`);
+      }
+    } catch {}
+
+    // Also delete expired guest accounts and clean up their parties
+    try {
+      const expired = await dbInject.deleteExpiredGuestsAndMemberships();
+      if (expired && expired.count > 0) {
+        console.log(
+          `[inactive] Deleted ${
+            expired.count
+          } expired guest account(s): ${expired.names.join(", ")}`
+        );
+        // Update affected parties after guest deletions
+        for (const partyId of expired.partyIds || []) {
+          await updateOrDeleteParty(partyId);
+        }
+      }
+    } catch (e) {
+      console.warn("expired guest cleanup failed:", e?.message || e);
+    }
+  } catch (e) {
+    console.warn("inactive cleanup failed:", e?.message || e);
+  }
+}
+setInterval(cleanupInactiveMembers, 1000 * 60 * 30);
+cleanupInactiveMembers();
+
+// Update status to offline
+async function inactiveStatus(params) {
+  // Mark users offline if their last_seen is older than 3 minutes
+  try {
+    const marked = await dbInject.setOfflineIfLastSeenOlderThan(3);
+    if (marked > 0) {
+      console.log(
+        `[inactive] Marked ${marked} user(s) offline due to last_seen > 3 minutes`
+      );
+    }
+  } catch (e) {
+    console.warn("offline status mark failed:", e?.message || e);
+  }
+}
+setInterval(inactiveStatus, 1000 * 60);
+inactiveStatus();

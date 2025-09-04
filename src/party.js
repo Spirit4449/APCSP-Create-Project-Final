@@ -2,7 +2,6 @@ import { create } from "lodash";
 import { sonner } from "./lib/sonner.js";
 import socket from "./socket";
 
-
 export function checkIfInParty() {
   const pathname = window.location.pathname;
   if (pathname.includes("party")) {
@@ -49,19 +48,179 @@ let hbTimer;
 export function startHeartbeat(partyId) {
   clearInterval(hbTimer);
   if (!partyId) return;
-  hbTimer = setInterval(() => socket.emit("heartbeat", partyId), 20000);
+  hbTimer = setInterval(() => socket.emit("heartbeat", partyId), 10000);
 }
-export function stopHeartbeat() { clearInterval(hbTimer); }
+export function stopHeartbeat() {
+  clearInterval(hbTimer);
+}
 
 // ---------------------------
 // Socket
 // ---------------------------
 
 export function socketInit() {
-  // Emits
+  const currentPartyId = checkIfInParty();
 
+  // Connection lifecycle
+  socket.on("connect", () => {
+    console.log("[socket] connected", socket.id);
+  });
 
-  // Listeners
+  socket.on("disconnect", (reason) => {
+    console.log("[socket] disconnected", reason);
+    stopHeartbeat();
+  });
+
+  // Proactively notify server before tab closes or navigates away
+  let byeSent = false;
+  function sendByeOnce() {
+    if (byeSent) return;
+    byeSent = true;
+    try {
+      socket.emit("client:bye");
+    } catch {}
+  }
+  // beforeunload fires on close/refresh/navigation. Does not fire on switching tabs.
+  window.addEventListener("beforeunload", sendByeOnce);
+  // pagehide also indicates leaving the page (including bfcache), not just switching tabs
+  window.addEventListener("pagehide", sendByeOnce, { once: true });
+
+  // Server tells us which room we're in (party or lobby)
+  socket.on("party:joined", ({ partyId }) => {
+    console.log("[socket] joined room", partyId ?? "lobby");
+    if (partyId) startHeartbeat(partyId);
+    else stopHeartbeat();
+  });
+
+  // Live roster updates for the party
+  socket.on("party:members", (data) => {
+    try {
+      // If this update isn't for our current party page, ignore
+      if (currentPartyId && String(data.partyId) !== String(currentPartyId))
+        return;
+
+      // Sync mode/map dropdowns if present
+      const modeSel = document.getElementById("mode");
+      if (modeSel && data.mode) modeSel.value = String(data.mode);
+      const mapSel = document.getElementById("map");
+      if (mapSel && data.map) mapSel.value = String(data.map);
+
+      // Render minimal 1v1 view into the existing two slots if available
+      renderPartyMembers(data);
+    } catch (e) {
+      console.warn("[socket] party:members render failed", e);
+    }
+  });
+
+  // Presence/status changes: update the matching slot if visible
+  socket.on("status:update", (evt) => {
+    if (currentPartyId && String(evt.partyId) !== String(currentPartyId))
+      return;
+    const slots = [
+      document.getElementById("your-slot-1"),
+      document.getElementById("op-slot-1"),
+    ];
+    for (const slot of slots) {
+      if (!slot) continue;
+      const nameEl = slot.querySelector(".username");
+      const statusEl = slot.querySelector(".status");
+      if (!nameEl || !statusEl) continue;
+      const text = nameEl.textContent || "";
+      if (text === evt.name || text === `${evt.name} (You)`) {
+        statusEl.textContent = evt.status || "Not Ready";
+        statusEl.className = `status ${statusToClass(evt.status)}`;
+      }
+    }
+  });
+}
+
+export function renderPartyMembers(data) {
+  const members = Array.isArray(data.members) ? data.members : [];
+  const currentUserName =
+    document.getElementById("username-text")?.textContent || "";
+
+  // Find viewer's member entry
+  const me = members.find((m) => m?.name === currentUserName) || null;
+  if (me) {
+    const otherTeam = me.team === "team1" ? "team2" : "team1";
+    const opp = members.find((m) => m.team === otherTeam) || null;
+    applyMemberToSlot(me, "your-slot-1");
+    applyMemberToSlot(opp, "op-slot-1");
+  } else {
+    // Fallback to first by team if viewer missing from payload
+    const team1 = members.find((m) => m.team === "team1") || null;
+    const team2 = members.find((m) => m.team === "team2") || null;
+    // Heuristic: if only one member, put them in your slot
+    if (team1 && !team2) {
+      applyMemberToSlot(team1, "your-slot-1");
+      applyMemberToSlot(null, "op-slot-1");
+    } else {
+      applyMemberToSlot(team1, "your-slot-1");
+      applyMemberToSlot(team2, "op-slot-1");
+    }
+  }
+}
+
+function applyMemberToSlot(member, slotId) {
+  const slot = document.getElementById(slotId);
+  if (!slot) return;
+
+  const usernameEl = slot.querySelector(".username");
+  const spriteEl = slot.querySelector(".character-sprite");
+  const statusEl = slot.querySelector(".status");
+
+  if (!member) {
+    // Reset to Random state if empty
+    if (usernameEl) usernameEl.textContent = "Random";
+    if (spriteEl) {
+      spriteEl.src = "/assets/random.png";
+      spriteEl.alt = "Random";
+      spriteEl.classList.add("random");
+    }
+    if (statusEl) {
+      statusEl.textContent = "Invite";
+      statusEl.className = "status invite";
+      // Ensure Invite remains clickable even if parent slot is non-interactive
+      statusEl.style.pointerEvents = "auto";
+      statusEl.style.cursor = "pointer";
+    }
+    slot.className = "character-slot empty";
+    // Keep slot hit-testable so its children (Invite) can be clicked
+    slot.style.pointerEvents = "auto";
+    slot.style.cursor = "default";
+    return;
+  }
+
+  // Fill with member info
+  const you = document.getElementById("username-text")?.textContent;
+  const displayName =
+    member.name === you ? `${member.name} (You)` : member.name;
+  if (usernameEl) usernameEl.textContent = displayName;
+  if (spriteEl) {
+    const cls = member.char_class || "ninja";
+    spriteEl.src = `/assets/${cls}/body.png`;
+    spriteEl.alt = cls;
+    spriteEl.classList.remove("random");
+  }
+  if (statusEl) {
+    const st = member.status || "Not Ready";
+    statusEl.textContent = st;
+    statusEl.className = `status ${statusToClass(st)}`;
+  }
+  // Set slot style class for outline/visuals based on viewer
+  const curName = document.getElementById("username-text")?.textContent || "";
+  const isYou = member.name === curName;
+  slot.className = `character-slot ${isYou ? "player-display" : "op-display"}`;
+  // Do not block pointer events on opponent slot; only your slot shows pointer cursor
+  slot.style.pointerEvents = "auto";
+  slot.style.cursor = isYou ? "pointer" : "default";
+}
+
+function statusToClass(status) {
+  const s = String(status || "").toLowerCase();
+  if (s === "online") return "ready"; // online should render as green
+  if (s.includes("ready") || s.includes("battle")) return "ready";
+  return "not-ready";
 }
 
 // party.addEventListener("click", (event) => {

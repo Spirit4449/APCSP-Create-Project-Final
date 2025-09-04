@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "server": "nodemon --watch server.js --watch webpack.config.js server.js",
+    "server": "nodemon --watch server.js --watch socket.js --watch sql.js --watch webpack.config.js server.js",
     "webpack": "webpack serve --mode production",
     "build": "webpack --mode production",
     "start": "node server.js"

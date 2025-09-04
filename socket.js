@@ -2,13 +2,13 @@
 const cookie = require("cookie");
 const cookieSignature = require("cookie-signature");
 
-const HEARTBEAT_SEC = 60;          // client sends every 60s (fallback)
-const OFFLINE_FALLBACK_SEC = 120;  // if no heartbeat for 2 minutes, mark offline
-const DISCONNECT_GRACE_MS = 3000;  // avoid flicker on reloads
+const HEARTBEAT_SEC = 60; // client sends every 60s (fallback)
+const OFFLINE_FALLBACK_SEC = 120; // if no heartbeat for 2 minutes, mark offline
+const DISCONNECT_GRACE_MS = 3000; // avoid flicker on slower reloads
 
-// Maps to manage multi-tab presence and quick reloads
-const activeConnections = new Map(); // name -> count
-const pendingOffline = new Map();    // name -> timeoutId
+// Presence tracking (multi-tab safe)
+const userSockets = new Map(); // name -> Set<socketId>
+const pendingOffline = new Map(); // name -> timeoutId
 
 function readSignedCookieFromHandshake(socket, cookieName, secret) {
   const header = socket.handshake?.headers?.cookie;
@@ -55,7 +55,11 @@ function initSocket({ io, COOKIE_SECRET, db }) {
   // auth: attach user row from signed cookie
   io.use(async (socket, next) => {
     try {
-      const userIdStr = readSignedCookieFromHandshake(socket, "user_id", COOKIE_SECRET);
+      const userIdStr = readSignedCookieFromHandshake(
+        socket,
+        "user_id",
+        COOKIE_SECRET
+      );
       if (!userIdStr) {
         socket.data.user = null;
         return next();
@@ -81,12 +85,19 @@ function initSocket({ io, COOKIE_SECRET, db }) {
       console.warn("Could not persist socket_id:", e?.message);
     }
 
-    // count this connection (multi-tab safe) and mark online with party notify
+    // Track this socket for the user and mark online
     if (username) {
       const t = pendingOffline.get(username);
-      if (t) { clearTimeout(t); pendingOffline.delete(username); }
-      const cnt = (activeConnections.get(username) || 0) + 1;
-      activeConnections.set(username, cnt);
+      if (t) {
+        clearTimeout(t);
+        pendingOffline.delete(username);
+      }
+      let set = userSockets.get(username);
+      if (!set) {
+        set = new Set();
+        userSockets.set(username, set);
+      }
+      set.add(socket.id);
 
       try {
         const pid = await db.getPartyIdByName(username);
@@ -114,20 +125,33 @@ function initSocket({ io, COOKIE_SECRET, db }) {
       if (!uname || !partyId) return;
       try {
         await db.updateLastSeen(partyId, uname);
-        await db.setUserStatus(uname, "online");
       } catch (e) {
         console.warn("heartbeat error:", e?.message);
       }
     });
 
-    // simple party chat example
-    socket.on("party:chat", (msg, ack) => {
-      const text = (typeof msg === "string" ? msg : msg?.text || "").slice(0, 400);
-      if (!text) return ack && ack({ ok: false, error: "Empty" });
-      const room = currentPartyRoom(socket) || "lobby";
-      io.to(room).emit("party:chat", { from: username || "Guest", text, ts: Date.now() });
-      ack && ack({ ok: true });
+    // Proactive offline on tab close/navigation
+    socket.on("client:bye", async () => {
+      const uname = socket.data.user?.name;
+      if (!uname) return;
+      const t = pendingOffline.get(uname);
+      if (t) {
+        clearTimeout(t);
+        pendingOffline.delete(uname);
+      }
+      const set = userSockets.get(uname);
+      if (set) set.delete(socket.id);
+      if (!set || set.size === 0) {
+        // schedule offline; cancel if a new socket appears within grace time
+        const timer = setTimeout(async () => {
+          const s = userSockets.get(uname);
+          if (!s || s.size === 0) await setPresence(uname, "offline");
+          pendingOffline.delete(uname);
+        }, DISCONNECT_GRACE_MS);
+        pendingOffline.set(uname, timer);
+      }
     });
+
 
     socket.on("disconnect", async () => {
       try {
@@ -135,17 +159,16 @@ function initSocket({ io, COOKIE_SECRET, db }) {
       } catch (_) {}
 
       if (!username) return;
-
-      const left = (activeConnections.get(username) || 1) - 1;
-      if (left <= 0) {
-        activeConnections.delete(username);
+      const set = userSockets.get(username);
+      if (set) set.delete(socket.id);
+      const hasAny = !!(set && set.size > 0);
+      if (!hasAny) {
         const timer = setTimeout(async () => {
-          if (!activeConnections.has(username)) await setPresence(username, "offline");
+          const s = userSockets.get(username);
+          if (!s || s.size === 0) await setPresence(username, "offline");
           pendingOffline.delete(username);
         }, DISCONNECT_GRACE_MS);
         pendingOffline.set(username, timer);
-      } else {
-        activeConnections.set(username, left);
       }
     });
   });
@@ -174,7 +197,8 @@ function initSocket({ io, COOKIE_SECRET, db }) {
         if (!sid) return;
         const sock = io.sockets.sockets.get(sid);
         if (!sock) return;
-        for (const room of sock.rooms) if (room.startsWith("party:")) sock.leave(room);
+        for (const room of sock.rooms)
+          if (room.startsWith("party:")) sock.leave(room);
         sock.join(`party:${partyId}`);
         sock.emit("party:joined", { partyId });
       } catch (e) {
@@ -191,7 +215,8 @@ function initSocket({ io, COOKIE_SECRET, db }) {
         if (!sid) return;
         const sock = io.sockets.sockets.get(sid);
         if (!sock) return;
-        for (const room of sock.rooms) if (room.startsWith("party:")) sock.leave(room);
+        for (const room of sock.rooms)
+          if (room.startsWith("party:")) sock.leave(room);
         sock.join("lobby");
         sock.emit("party:joined", { partyId: null });
       } catch (e) {

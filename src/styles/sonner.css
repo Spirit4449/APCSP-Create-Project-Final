@@ -51,7 +51,7 @@
 .sonner__hdr {
   font-weight: 700;
   line-height: 1.1;
-  margin: 0;
+  margin-top: 3px;
   font-size: 15px;
   word-break: break-word;
 }

@@ -1,14 +1,13 @@
 // Database
-const mysql = require('mysql2/promise'); // Just mysql doesn't work
+const mysql = require("mysql2/promise"); // Just mysql doesn't work
 const pool = mysql.createPool({
-  host: 'localhost',       
-  user: 'root',            
-  password: 'Akshardhamsql',
-  database: 'game',
+  host: "localhost",
+  user: "root",
+  password: "Akshardhamsql",
+  database: "game",
   connectionLimit: 10,
-  queueLimit: 0
+  queueLimit: 0,
 });
-
 
 // Reusable MySQL query function
 async function runQuery(sql, params = []) {
@@ -22,12 +21,17 @@ async function runQuery(sql, params = []) {
 }
 
 async function getUserById(userId) {
-  const rows = await runQuery("SELECT * FROM users WHERE user_id = ? LIMIT 1", [userId]);
+  const rows = await runQuery("SELECT * FROM users WHERE user_id = ? LIMIT 1", [
+    userId,
+  ]);
   return rows[0] || null;
 }
 
 async function getPartyIdByName(name) {
-  const rows = await runQuery("SELECT party_id FROM party_members WHERE name = ? LIMIT 1", [name]);
+  const rows = await runQuery(
+    "SELECT party_id FROM party_members WHERE name = ? LIMIT 1",
+    [name]
+  );
   return rows[0]?.party_id ?? null;
 }
 
@@ -47,52 +51,129 @@ async function setUserStatus(name, status) {
 }
 
 async function setUserSocketId(userId, socketId) {
-  return runQuery("UPDATE users SET socket_id = ?, status = 'online' WHERE user_id = ?", [socketId, userId]);
+  return runQuery(
+    "UPDATE users SET socket_id = ?, status = 'online' WHERE user_id = ?",
+    [socketId, userId]
+  );
 }
 
 async function clearUserSocketIfMatch(userId, socketId) {
-  const rows = await runQuery("SELECT socket_id FROM users WHERE user_id = ? LIMIT 1", [userId]);
+  const rows = await runQuery(
+    "SELECT socket_id FROM users WHERE user_id = ? LIMIT 1",
+    [userId]
+  );
   if (rows[0]?.socket_id === socketId) {
-    await runQuery("UPDATE users SET socket_id = NULL WHERE user_id = ?", [userId]);
-  }
-}
-
-async function deleteEmptyParties() {
-  // MySQL needs a subselect wrapper when deleting from the same table you select
-  const sql = `
-    DELETE FROM parties
-    WHERE id IN (
-      SELECT id FROM (
-        SELECT p.id
-        FROM parties p
-        LEFT JOIN party_members m ON m.party_id = p.id
-        GROUP BY p.id
-        HAVING COUNT(m.name) = 0
-      ) as t
-    )
-  `;
-  try {
-    const result = await runQuery(sql);
-    return result.affectedRows || 0;
-  } catch (err) {
-    console.error("deleteEmptyParties failed:", err && err.message);
-    throw err;
+    await runQuery("UPDATE users SET socket_id = NULL WHERE user_id = ?", [
+      userId,
+    ]);
   }
 }
 
 async function updateLastSeen(partyId, username) {
-  await runQuery(
+  const result = await runQuery(
     "UPDATE party_members SET last_seen = NOW() WHERE party_id = ? AND name = ?",
     [partyId, username]
   );
 }
 
+// Delete all parties that currently have zero members
+async function deleteEmptyParties() {
+  const sql = `
+    DELETE FROM parties
+    WHERE party_id IN (
+      SELECT party_id FROM (
+        SELECT p.party_id
+        FROM parties p
+        LEFT JOIN party_members m ON m.party_id = p.party_id
+        GROUP BY p.party_id
+        HAVING COUNT(m.name) = 0
+      ) AS t
+    )
+  `;
+  const result = await runQuery(sql);
+  // mysql2 returns an OkPacket only via execute; with query we mapped to rows. Use affectedRows via runQuery return? Not available.
+  // As we used pool.query(sql) above, rows is an object in DML with affectedRows. Adjust runQuery to return rows.
+  // If driver returns an array, we handle undefined gracefully.
+  return result?.affectedRows || 0;
+}
+
+// Remove members whose last_seen is older than N minutes; return list of removed { party_id, name }
+async function findAndRemoveInactiveMembers(olderThanMinutes = 30) {
+  const mins = Number(olderThanMinutes) || 30;
+  // Fetch candidates first so we can return who was removed per party
+  const candidates = await runQuery(
+    `SELECT party_id, name
+       FROM party_members
+      WHERE last_seen < DATE_SUB(NOW(), INTERVAL ? MINUTE)`,
+    [mins]
+  );
+  if (!candidates.length) return [];
+
+  await runQuery(
+    `DELETE FROM party_members
+      WHERE last_seen < DATE_SUB(NOW(), INTERVAL ? MINUTE)`,
+    [mins]
+  );
+  return candidates;
+}
+
+// Delete expired guest accounts (expires_at < NOW()) and their memberships.
+// Returns { count, names, partyIds }
+async function deleteExpiredGuestsAndMemberships() {
+  const expired = await runQuery(
+    `SELECT name FROM users WHERE expires_at IS NOT NULL AND expires_at < NOW()`
+  );
+  if (!expired.length) return { count: 0, names: [], partyIds: [] };
+
+  const names = expired.map((r) => r.name);
+  // Build placeholders for IN clause
+  const placeholders = names.map(() => "?").join(",");
+
+  // Parties impacted by these users
+  const partyRows = await runQuery(
+    `SELECT DISTINCT party_id FROM party_members WHERE name IN (${placeholders})`,
+    names
+  );
+  const partyIds = partyRows.map((r) => r.party_id);
+
+  // Remove their memberships first
+  await runQuery(
+    `DELETE FROM party_members WHERE name IN (${placeholders})`,
+    names
+  );
+  // Delete the users
+  const result = await runQuery(
+    `DELETE FROM users WHERE expires_at IS NOT NULL AND expires_at < NOW()`
+  );
+  const count = result?.affectedRows || 0;
+  return { count, names, partyIds };
+}
+
+// Set status to 'offline' for users whose last_seen in party_members is older than N minutes.
+// Returns the number of rows affected.
+async function setOfflineIfLastSeenOlderThan(minutes = 3) {
+  const mins = Math.max(1, Number(minutes) || 3);
+  const result = await runQuery(
+    `UPDATE users u
+       LEFT JOIN party_members pm ON pm.name = u.name
+        SET u.status = 'offline'
+      WHERE u.status <> 'offline'
+        AND (
+          pm.last_seen IS NULL OR pm.last_seen < DATE_SUB(NOW(), INTERVAL ? MINUTE)
+        )`,
+    [mins]
+  );
+  return result?.affectedRows || 0;
+}
 
 module.exports = {
   pool,
   runQuery,
   updateLastSeen,
   deleteEmptyParties,
+  deleteExpiredGuestsAndMemberships,
+  setOfflineIfLastSeenOlderThan,
+  findAndRemoveInactiveMembers,
   getUserById,
   getPartyIdByName,
   fetchPartyMembersDetailed,
