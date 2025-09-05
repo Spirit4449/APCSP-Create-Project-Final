@@ -7,6 +7,7 @@ import {
   LEVEL_CAP,
   upgradePrice,
 } from "./lib/characterStats.js";
+import socket from "./socket.js";
 
 // Keep a reference to user data for confirmations and currency display
 let _userDataRef = null;
@@ -274,8 +275,59 @@ export function openCharacterSelect() {
 }
 
 function selectCharacter(character) {
-  console.log("Character selected:", character);
-  document.querySelector(".character-select-overlay").style.display = "none";
+  try {
+    const charClass = String(character);
+    // Optimistically update local user data
+    if (_userDataRef) _userDataRef.char_class = charClass;
+
+    // Update the main body sprite image immediately
+    const mainSprite = document.getElementById("sprite");
+    if (mainSprite) {
+      mainSprite.src = `/assets/${charClass}/body.png`;
+      mainSprite.alt = charClass;
+      try {
+        mainSprite.classList.remove("random");
+      } catch {}
+    }
+
+    // Update current user's visible slot, if present
+    const yourSlot =
+      document.querySelector('.character-slot[data-is-current-user="true"]') ||
+      document.getElementById("your-slot-1");
+    if (yourSlot) {
+      const spriteEl = yourSlot.querySelector(".character-sprite");
+      if (spriteEl) {
+        spriteEl.src = `/assets/${charClass}/body.png`;
+        spriteEl.alt = charClass;
+        spriteEl.classList.remove("random");
+      }
+      yourSlot.dataset.character = charClass;
+      yourSlot.classList.remove("empty");
+    }
+
+    // If in a party, emit socket event so others update
+    const partyId = (function () {
+      const pathname = window.location.pathname || "";
+      if (pathname.includes("/party/")) {
+        const last = pathname.split("/").filter(Boolean).pop();
+        if (last && /^\d+$/.test(last)) return Number(last);
+        return last; // fallback allow non-numeric ids if used
+      }
+      return null;
+    })();
+    if (partyId) {
+      socket.emit("char-change", { partyId, character: charClass });
+    } else {
+      // Not in party: still persist to server so future sessions load it
+      // Use the same socket channel without partyId; server will update only the user row
+      socket.emit("char-change", { character: charClass });
+    }
+  } catch (e) {
+    console.warn("selectCharacter failed:", e?.message);
+  } finally {
+    const overlay = document.querySelector(".character-select-overlay");
+    if (overlay) overlay.style.display = "none";
+  }
 }
 
 // Small confirm modal helper
@@ -530,7 +582,7 @@ function applyUpgrade(character, currentLevel) {
         } catch (_) {}
         // Re-render the specific card and play animation
         rerenderCharacterCard(character, _userDataRef || {}, "upgrade");
-        document.getElementById('coin-count').textContent = _userDataRef.coins;
+        document.getElementById("coin-count").textContent = _userDataRef.coins;
       } else {
         showErrorDialog(data.error || "Upgrade failed.");
       }
@@ -567,7 +619,7 @@ function applyUnlock(character, price) {
           }
         } catch (_) {}
         rerenderCharacterCard(character, _userDataRef || {}, "unlock");
-        document.getElementById('gem-count').textContent = _userDataRef.gems;
+        document.getElementById("gem-count").textContent = _userDataRef.gems;
       } else {
         showErrorDialog(data.error || "Unlock failed.");
       }

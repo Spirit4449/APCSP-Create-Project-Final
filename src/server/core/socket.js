@@ -1,6 +1,7 @@
 // socket.js
 const cookie = require("cookie");
 const cookieSignature = require("cookie-signature");
+const { emitRoster, selectPartyById } = require("../helpers/party");
 
 const HEARTBEAT_SEC = 60; // client sends every 60s (fallback)
 const OFFLINE_FALLBACK_SEC = 120; // if no heartbeat for 2 minutes, mark offline
@@ -206,6 +207,60 @@ function initSocket({ io, COOKIE_SECRET, db }) {
         );
       } catch (e) {
         console.warn("map-change error:", e?.message);
+      }
+    });
+
+    // Character change handler
+    socket.on("char-change", async (data) => {
+      const uname = socket.data.user?.name;
+      if (!uname) return;
+      // Accept either { partyId, character } or { partyId, charClass }
+      const partyId = data?.partyId ? Number(data.partyId) : null;
+      const charClass = (data?.character || data?.charClass || "")
+        .toString()
+        .trim();
+      // Basic validation: letters, dash/underscore only and reasonable length
+      if (!charClass || !/^[a-zA-Z_-]{2,20}$/.test(charClass)) return;
+
+      try {
+        // Ensure user actually belongs to the party before broadcasting
+        if (partyId) {
+          const mem = await db.runQuery(
+            "SELECT 1 FROM party_members WHERE party_id = ? AND name = ? LIMIT 1",
+            [partyId, uname]
+          );
+          if (!mem?.length) {
+            // Still allow updating your own selected character silently
+            await db.runQuery(
+              "UPDATE users SET char_class = ? WHERE name = ?",
+              [charClass, uname]
+            );
+            return;
+          }
+        }
+
+        // Update user selection in DB
+        await db.runQuery("UPDATE users SET char_class = ? WHERE name = ?", [
+          charClass,
+          uname,
+        ]);
+
+        // If in a party, broadcast refreshed roster to everyone
+        if (partyId) {
+          // Fetch party + members and emit via existing helper for consistency
+          const party = await selectPartyById(db, partyId);
+          if (party) {
+            const members = await db.fetchPartyMembersDetailed(partyId);
+            await emitRoster(io, partyId, party, members);
+          }
+        } else {
+          // Not in a party; nothing to broadcast. Optionally, could emit back to user for confirmation.
+        }
+
+        // Optional: log
+        console.log(`[party:${partyId ?? "-"}] ${uname} selected ${charClass}`);
+      } catch (e) {
+        console.warn("char-change error:", e?.message);
       }
     });
 
