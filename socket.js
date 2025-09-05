@@ -152,6 +152,97 @@ function initSocket({ io, COOKIE_SECRET, db }) {
       }
     });
 
+    // Mode change handler
+    socket.on("mode-change", async (data) => {
+      const uname = socket.data.user?.name;
+      if (!uname || !data.partyId) return;
+
+      try {
+        // Update party mode in database
+        await require("./sql").runQuery(
+          "UPDATE parties SET mode = ? WHERE party_id = ?",
+          [data.selectedValue, data.partyId]
+        );
+
+        // Broadcast mode change to all party members
+        io.to(`party:${data.partyId}`).emit("mode-change", {
+          partyId: data.partyId,
+          selectedValue: data.selectedValue,
+          mode: data.selectedValue,
+          username: uname,
+          members: data.members,
+        });
+
+        console.log(
+          `[party:${data.partyId}] Mode changed to ${data.selectedValue} by ${uname}`
+        );
+      } catch (e) {
+        console.warn("mode-change error:", e?.message);
+      }
+    });
+
+    // Map change handler
+    socket.on("map-change", async (data) => {
+      const uname = socket.data.user?.name;
+      if (!uname || !data.partyId) return;
+
+      try {
+        // Update party map in database
+        await require("./sql").runQuery(
+          "UPDATE parties SET map = ? WHERE party_id = ?",
+          [data.selectedValue, data.partyId]
+        );
+
+        // Broadcast map change to all party members
+        io.to(`party:${data.partyId}`).emit("map-change", {
+          partyId: data.partyId,
+          selectedValue: data.selectedValue,
+          map: data.selectedValue,
+          username: uname,
+        });
+
+        console.log(
+          `[party:${data.partyId}] Map changed to ${data.selectedValue} by ${uname}`
+        );
+      } catch (e) {
+        console.warn("map-change error:", e?.message);
+      }
+    });
+
+    // Team update handler (if needed for future drag and drop)
+    // socket.on("team-update", async (data) => {
+    //   const uname = socket.data.user?.name;
+    //   if (!uname || !data.partyId || data.username !== uname) return;
+
+    //   try {
+    //     // Update user's team assignment in database
+    //     const teamNum = data.team === "your-team" ? "team1" : "team2";
+    //     await require("./sql").runQuery(
+    //       "UPDATE party_members SET team = ? WHERE name = ? AND party_id = ?",
+    //       [teamNum, uname, data.partyId]
+    //     );
+
+    //     // Fetch updated member list and broadcast
+    //     const members = await db.fetchPartyMembersDetailed(data.partyId);
+    //     const party = await require("./sql").runQuery(
+    //       "SELECT mode, map FROM parties WHERE party_id = ? LIMIT 1",
+    //       [data.partyId]
+    //     );
+
+    //     if (party[0]) {
+    //       io.to(`party:${data.partyId}`).emit("party:members", {
+    //         partyId: data.partyId,
+    //         mode: party[0].mode,
+    //         map: party[0].map,
+    //         members,
+    //       });
+    //     }
+
+    //     console.log(`[party:${data.partyId}] ${uname} moved to ${teamNum}`);
+    //   } catch (e) {
+    //     console.warn("team-update error:", e?.message);
+    //   }
+    // });
 
     socket.on("disconnect", async () => {
       try {

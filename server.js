@@ -153,10 +153,10 @@ async function getOrCreateCurrentUser(req, res, { autoCreate = true } = {}) {
       "SELECT * FROM users WHERE user_id = ? LIMIT 1",
       [id]
     );
-    if (rows.length > 0) return rows[0];
+    if (rows.length > 0) return [rows[0], "existing"];
   }
   if (!autoCreate) return null;
-  return await createGuestAndSetCookies(res);
+  return [await createGuestAndSetCookies(res), "new"];
 }
 
 async function requireCurrentUser(req, res) {
@@ -206,7 +206,7 @@ app.get("/login", (req, res) => {
 // ---------------------------
 app.get("/", async (req, res) => {
   try {
-    const user = await getOrCreateCurrentUser(req, res, { autoCreate: true });
+    const [user, userType] = await getOrCreateCurrentUser(req, res, { autoCreate: true });
     const rows = await runQuery(
       "SELECT party_id FROM party_members WHERE name = ? LIMIT 1",
       [user?.name]
@@ -236,7 +236,7 @@ app.get("/party/:partyid", async (req, res) => {
 
 app.post("/status", async (req, res) => {
   try {
-    const user = await getOrCreateCurrentUser(req, res, { autoCreate: true });
+    const [user, userType] = await getOrCreateCurrentUser(req, res, { autoCreate: true });
     const partyRows = await runQuery(
       "SELECT party_id FROM party_members WHERE name = ? LIMIT 1",
       [user.name]
@@ -244,6 +244,7 @@ app.post("/status", async (req, res) => {
     res.json({
       success: true,
       userData: user,
+      newlyCreated: userType === "new",
       guest: isGuest(user),
       party_id: partyRows[0]?.party_id ?? null,
     });
@@ -441,6 +442,48 @@ app.post("/partydata", async (req, res) => {
     res.status(500).json({ error: "Internal error" });
   } finally {
     if (conn) conn.release();
+  }
+});
+
+app.post("/party-members", async (req, res) => {
+  try {
+    const user = await requireCurrentUser(req, res);
+    if (!user) return res.status(401).json({ error: "Not authenticated" });
+
+    const { partyId } = req.body;
+    if (!partyId) {
+      return res.status(400).json({ error: "Party ID required" });
+    }
+
+    // Check if user is in this party
+    const membership = await runQuery(
+      "SELECT 1 FROM party_members WHERE name = ? AND party_id = ? LIMIT 1",
+      [user.name, partyId]
+    );
+
+    if (!membership.length) {
+      return res.status(403).json({ error: "Not a member of this party" });
+    }
+
+    // Get party details and members
+    const party = await selectPartyById(partyId);
+    if (!party) {
+      return res.status(404).json({ error: "Party not found" });
+    }
+
+    const members = await fetchPartyMembersDetailed(partyId);
+
+    res.json({
+      partyId: party.party_id,
+      mode: party.mode,
+      map: party.map,
+      members,
+      membersCount: members.length,
+      capacity: capacityFromMode(party.mode),
+    });
+  } catch (err) {
+    console.error("POST /party-members", err);
+    res.status(500).json({ error: "Internal error" });
   }
 });
 

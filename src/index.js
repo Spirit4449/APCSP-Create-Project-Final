@@ -5,6 +5,7 @@ import {
   leaveParty,
   socketInit,
   renderPartyMembers,
+  initializeModeDropdown,
 } from "./party.js";
 import {
   initializeCharacterSelect,
@@ -18,6 +19,36 @@ let userData = null;
 let guest = false;
 
 const existingPartyId = checkIfInParty();
+
+// Fetch user status upfront
+const statusPromise = fetch("/status", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  credentials: "same-origin",
+})
+  .then((res) => res.json())
+  .then((data) => {
+    if (data?.userData) {
+      userData = data.userData;
+      guest = data.guest;
+      if (data.party_id && !existingPartyId) {
+        // If user is in a party but not at the url, send them to it
+        console.log("User is in party:", data.party_id);
+        window.location.href = `/party/${data.party_id}`;
+      }
+    }
+  })
+  .catch((err) => console.error("Error fetching /status:", err));
+
+// Wait for status before trying to bootstrap party data
+if (existingPartyId) {
+  statusPromise.then(() => {
+    if (userData) {
+      bootstrapPartyData(existingPartyId);
+    }
+  });
+}
+
 async function bootstrapPartyData(partyId) {
   console.log("In a party:", partyId);
   try {
@@ -61,35 +92,6 @@ async function bootstrapPartyData(partyId) {
   }
 }
 
-// Fetch user status upfront
-const statusPromise = fetch("/status", {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  credentials: "same-origin",
-})
-  .then((res) => res.json())
-  .then((data) => {
-    if (data?.userData) {
-      userData = data.userData;
-      guest = data.guest;
-      if (data.party_id && !existingPartyId) {
-        // If user is in a party but not at the url, send them to it
-        console.log("User is in party:", data.party_id);
-        window.location.href = `/party/${data.party_id}`;
-      }
-    }
-  })
-  .catch((err) => console.error("Error fetching /status:", err));
-
-// Wait for status before trying to bootstrap party data
-if (existingPartyId) {
-  statusPromise.then(() => {
-    if (userData) {
-      bootstrapPartyData(existingPartyId);
-    }
-  });
-}
-
 document.addEventListener("DOMContentLoaded", async () => {
   await statusPromise;
   if (!userData) return;
@@ -107,11 +109,34 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("username-text").textContent = userData.name;
   setLobbyBackground("1");
   characterBodyElement.src = `/assets/${userData.char_class}/body.png`;
+  // Ensure non-random styling on initial sprite
+  try {
+    characterBodyElement.classList.remove("random");
+  } catch {}
   coinCount.textContent = userData.coins;
   gemCount.textContent = userData.gems;
 
-  characterSelect.addEventListener("click", openCharacterSelect);
+  // Initialize character select UI
   initializeCharacterSelect(userData);
+
+  // Delegated click: open selector only for the current user's slot
+  const lobby = document.getElementById("lobby-area");
+  if (lobby) {
+    lobby.addEventListener("click", (e) => {
+      const slot = e.target.closest && e.target.closest(".character-slot");
+      if (!slot) return;
+      if (slot.dataset.isCurrentUser === "true") {
+        openCharacterSelect();
+      }
+    });
+  }
+
+  // Hide any pre-existing switch controls; party.js will show it on your slot
+  document.querySelectorAll(".switch-character").forEach((el) => {
+    el.style.display = "none";
+  });
+
+  initializeModeDropdown(); // Initialize mode dropdown functionality for both party and lobby
 
   if (existingPartyId) {
     createPartyButton.textContent = "Leave Party";
@@ -158,6 +183,21 @@ document.addEventListener("DOMContentLoaded", async () => {
       status.style.display = "none";
       status.style.cursor = "default";
     });
+
+    // Not in a party: ensure your-slot-1 is marked as current user and switch visible
+    const yourSlot = document.getElementById("your-slot-1");
+    if (yourSlot) {
+      yourSlot.dataset.isCurrentUser = "true";
+      const switchEl = yourSlot.querySelector(".switch-character");
+      if (switchEl) switchEl.style.display = "";
+      // Show username instead of "Random" and mark active visuals
+      const nameEl = yourSlot.querySelector(".username");
+      if (nameEl) nameEl.textContent = userData.name;
+      const spriteEl = yourSlot.querySelector(".character-sprite");
+      if (spriteEl) spriteEl.classList.remove("random");
+      yourSlot.className = "character-slot player-display";
+      yourSlot.dataset.character = userData.char_class || "ninja";
+    }
   }
 });
 
