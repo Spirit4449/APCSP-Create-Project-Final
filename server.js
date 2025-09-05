@@ -7,11 +7,10 @@ const express = require("express");
 const http = require("http");
 const socketIo = require("socket.io");
 const path = require("path");
+const fs = require("fs");
+const crypto = require("crypto");
 const cookieParser = require("cookie-parser");
 const bcrypt = require("bcrypt");
-const webpack = require("webpack");
-const webpackDevMiddleware = require("webpack-dev-middleware");
-const webpackHotMiddleware = require("webpack-hot-middleware");
 
 const {
   DEFAULT_CHARACTER,
@@ -33,15 +32,37 @@ const { initSocket } = require("./socket");
 const app = express();
 const server = http.createServer(app);
 const io = socketIo(server);
-const port = 3002;
+const port = Number(process.env.PORT) || 3002;
 
 // ---------------------------
 // Config
 // ---------------------------
 const IS_PROD = process.env.NODE_ENV === "production";
-const COOKIE_SECRET =
-  "process.env.COOKIE_SECRET" ||
-  `dev-insecure-${Math.random().toString(36).slice(2)}-${Date.now()}`;
+const PUBLIC_DIR = path.join(__dirname, "public");
+const DIST_DIR = path.join(__dirname, "dist");
+const PAGE_ROOT = IS_PROD ? DIST_DIR : PUBLIC_DIR;
+
+// Resolve a persistent cookie secret:
+// 1) Use env var if provided
+// 2) Else use a local secret file generated once
+// 3) Else generate a random secret and save it so it persists across restarts
+function resolveCookieSecret() {
+  const fromEnv = process.env.COOKIE_SECRET;
+  if (fromEnv && String(fromEnv).trim()) return String(fromEnv);
+  const secretPath = path.join(__dirname, ".cookie-secret");
+  try {
+    if (fs.existsSync(secretPath)) {
+      const s = fs.readFileSync(secretPath, "utf8").trim();
+      if (s) return s;
+    }
+  } catch (_) {}
+  const newSecret = crypto.randomBytes(32).toString("hex");
+  try {
+    fs.writeFileSync(secretPath, newSecret, { encoding: "utf8" });
+  } catch (_) {}
+  return newSecret;
+}
+const COOKIE_SECRET = resolveCookieSecret();
 
 const SIGNED_COOKIE_OPTS = {
   httpOnly: true,
@@ -55,17 +76,28 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser(COOKIE_SECRET));
 
-// Webpack dev (as you had)
-const config = require("./webpack.config.js");
-const compiler = webpack(config);
-app.use(
-  webpackDevMiddleware(compiler, {
-    publicPath: config.output.publicPath,
-    serverSideRender: false,
-  })
-);
-app.use(webpackHotMiddleware(compiler));
-app.use(express.static(path.join(__dirname, "dist")));
+
+// Static and dev middleware
+if (!IS_PROD) {
+  // Load dev-only deps lazily to avoid requiring them in prod
+  const webpack = require("webpack");
+  const webpackDevMiddleware = require("webpack-dev-middleware");
+  const webpackHotMiddleware = require("webpack-hot-middleware");
+  const config = require("./webpack.config.js");
+  const compiler = webpack(config);
+  app.use(
+    webpackDevMiddleware(compiler, {
+      publicPath: config.output.publicPath,
+      serverSideRender: false,
+    })
+  );
+  app.use(webpackHotMiddleware(compiler));
+  // Dev: serve public only
+  app.use(express.static(PUBLIC_DIR));
+} else {
+  // Prod: serve dist only
+  app.use(express.static(DIST_DIR));
+}
 
 // ---------------------------
 // Helpers (users & cookies)
@@ -184,16 +216,16 @@ function capacityFromMode(mode) {
 // ---------------------------
 
 app.get("/partyfull", (req, res) => {
-  res.sendFile(path.join(__dirname, "dist", "/Errors/partyfull.html"));
+  res.sendFile(path.join(PAGE_ROOT, "Errors", "partyfull.html"));
 });
 app.get("/cannotjoin", (req, res) => {
-  res.sendFile(path.join(__dirname, "dist", "/Errors/cannotjoin.html"));
+  res.sendFile(path.join(PAGE_ROOT, "Errors", "cannotjoin.html"));
 });
 app.get("/partynotfound", (req, res) => {
-  res.sendFile(path.join(__dirname, "dist", "/Errors/partynotfound.html"));
+  res.sendFile(path.join(PAGE_ROOT, "Errors", "partynotfound.html"));
 });
 app.get("/signed-out", (req, res) => {
-  res.sendFile(path.join(__dirname, "dist", "/Errors/signed-out.html"));
+  res.sendFile(path.join(PAGE_ROOT, "Errors", "signed-out.html"));
 });
 app.get("/signup", (req, res) => {
   res.sendFile(path.join(__dirname, "dist", "/signup.html"));
@@ -206,7 +238,9 @@ app.get("/login", (req, res) => {
 // ---------------------------
 app.get("/", async (req, res) => {
   try {
-    const [user, userType] = await getOrCreateCurrentUser(req, res, { autoCreate: true });
+    const [user, userType] = await getOrCreateCurrentUser(req, res, {
+      autoCreate: true,
+    });
     const rows = await runQuery(
       "SELECT party_id FROM party_members WHERE name = ? LIMIT 1",
       [user?.name]
@@ -215,7 +249,7 @@ app.get("/", async (req, res) => {
   } catch (e) {
     console.error(e);
   }
-  res.sendFile(path.join(__dirname, "dist", "index.html"));
+  res.sendFile(path.join(PAGE_ROOT, "index.html"));
 });
 
 app.get("/party/:partyid", async (req, res) => {
@@ -231,12 +265,14 @@ app.get("/party/:partyid", async (req, res) => {
   } catch (e) {
     console.error(e);
   }
-  res.sendFile(path.join(__dirname, "dist", "index.html"));
+  res.sendFile(path.join(PAGE_ROOT, "index.html"));
 });
 
 app.post("/status", async (req, res) => {
   try {
-    const [user, userType] = await getOrCreateCurrentUser(req, res, { autoCreate: true });
+    const [user, userType] = await getOrCreateCurrentUser(req, res, {
+      autoCreate: true,
+    });
     const partyRows = await runQuery(
       "SELECT party_id FROM party_members WHERE name = ? LIMIT 1",
       [user.name]
@@ -326,7 +362,7 @@ app.post("/partydata", async (req, res) => {
       await conn.rollback();
       return res
         .status(404)
-        .sendFile(path.join(__dirname, "dist/Errors", "partynotfound.html"));
+        .sendFile(path.join(PAGE_ROOT, "Errors", "partynotfound.html"));
     }
     const party = partyRows[0];
     const { total: totalCap, perTeam: perTeamCap } = capacityFromMode(
@@ -836,7 +872,7 @@ app.post("/buy", async (req, res) => {
 // ---------------------------
 
 app.use((req, res, next) => {
-  return res.sendFile(path.join(__dirname, "dist", "/Errors/404.html"));
+  return res.sendFile(path.join(PAGE_ROOT, "Errors", "404.html"));
 });
 
 // ---------------------------
