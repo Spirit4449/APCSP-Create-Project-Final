@@ -60,8 +60,8 @@ class GameScene extends Phaser.Scene {
   // Preloads assets
   preload() {
     cdbg();
-    this.load.image("lushy-bg", `${staticPath}/Lushy/gameBg.png`);
-    this.load.image("mangrove-bg", `${staticPath}/Mangrove/gameBg.png`);
+    this.load.image("lushy-bg", `${staticPath}/lushy/gameBg.png`);
+    this.load.image("mangrove-bg", `${staticPath}/mangrove/gameBg.png`);
     // Character assets (preload all registered characters)
     preloadAll(this, staticPath);
 
@@ -72,30 +72,30 @@ class GameScene extends Phaser.Scene {
     );
     this.load.image("tiles-image", `${staticPath}/map.png`);
     this.load.tilemapTiledJSON("tiles", `${staticPath}/tilesheet.json`);
-    this.load.image("lushy-base", `${staticPath}/Lushy/base.png`);
-    this.load.image("lushy-platform", `${staticPath}/Lushy/largePlatform.png`);
+    this.load.image("lushy-base", `${staticPath}/lushy/base.png`);
+    this.load.image("lushy-platform", `${staticPath}/lushy/largePlatform.png`);
     this.load.image(
       "lushy-side-platform",
-      `${staticPath}/Lushy/sidePlatform.png`
+      `${staticPath}/lushy/sidePlatform.png`
     );
-    // this.load.image("lushy-medium-platform", `${staticPath}/Lushy/mediumPlatform.png`);
+    // this.load.image("lushy-medium-platform", `${staticPath}/lushy/mediumPlatform.png`);
     this.load.image(
       "mangrove-tiny-platform",
-      `${staticPath}/Mangrove/tinyPlatform.png`
+      `${staticPath}/mangrove/tinyPlatform.png`
     );
     this.load.image(
       "mangrove-base-left",
-      `${staticPath}/Mangrove/baseLeft.png`
+      `${staticPath}/mangrove/baseLeft.png`
     );
     this.load.image(
       "mangrove-base-middle",
-      `${staticPath}/Mangrove/baseMiddle.png`
+      `${staticPath}/mangrove/baseMiddle.png`
     );
     this.load.image(
       "mangrove-base-right",
-      `${staticPath}/Mangrove/baseRight.png`
+      `${staticPath}/mangrove/baseRight.png`
     );
-    this.load.image("mangrove-base-top", `${staticPath}/Mangrove/baseTop.png`);
+    this.load.image("mangrove-base-top", `${staticPath}/mangrove/baseTop.png`);
     this.load.image("thorg-weapon", `${staticPath}/thorg/weapon.png`);
     // Movement SFX (place files under /assets/audio)
     this.load.audio("sfx-step", `${staticPath}/step.ogg`);

@@ -1,7 +1,7 @@
 body {
   margin: 0;
   /* Use root-relative path served by Express/DevServer static from dist */
-  background-image: url("/assets/Lushy/lobbyBg.jpg");
+  background-image: url("/assets/lushy/lobbyBg.jpg");
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
