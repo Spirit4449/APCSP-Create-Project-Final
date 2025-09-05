@@ -4,9 +4,9 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "dev": "cross-env NODE_ENV=development PORT=3002 nodemon --watch server.js --watch socket.js --watch sql.js server.js",
+    "dev": "cross-env NODE_ENV=development PORT=3002 nodemon --watch src/server --ext js,json --exec node src/server/server.js",
     "build": "webpack --mode production",
-    "start": "cross-env NODE_ENV=production node server.js"
+    "start": "cross-env NODE_ENV=production node src/server/server.js"
   },
   "author": "",
   "license": "ISC",

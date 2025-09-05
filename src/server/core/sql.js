@@ -20,6 +20,38 @@ async function runQuery(sql, params = []) {
   }
 }
 
+// Run a query using an existing connection (for transactions)
+async function runQueryConn(conn, sql, params = []) {
+  try {
+    const [rows] = await conn.query(sql, params);
+    return rows;
+  } catch (error) {
+    console.error("MySQL query (conn) error:", error);
+    throw error;
+  }
+}
+
+// Helper to run a function within a transaction on a single connection
+// Usage: await withTransaction(async (conn, q) => { await q("SQL", [..]); })
+async function withTransaction(fn) {
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const result = await fn(conn, (sql, params = []) =>
+      runQueryConn(conn, sql, params)
+    );
+    await conn.commit();
+    return result;
+  } catch (error) {
+    try {
+      await conn.rollback();
+    } catch (_) {}
+    throw error;
+  } finally {
+    conn.release();
+  }
+}
+
 async function getUserById(userId) {
   const rows = await runQuery("SELECT * FROM users WHERE user_id = ? LIMIT 1", [
     userId,
@@ -169,6 +201,8 @@ async function setOfflineIfLastSeenOlderThan(minutes = 3) {
 module.exports = {
   pool,
   runQuery,
+  runQueryConn,
+  withTransaction,
   updateLastSeen,
   deleteEmptyParties,
   deleteExpiredGuestsAndMemberships,

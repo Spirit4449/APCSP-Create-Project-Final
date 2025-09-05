@@ -159,10 +159,10 @@ function initSocket({ io, COOKIE_SECRET, db }) {
 
       try {
         // Update party mode in database
-        await require("./sql").runQuery(
-          "UPDATE parties SET mode = ? WHERE party_id = ?",
-          [data.selectedValue, data.partyId]
-        );
+        await db.runQuery("UPDATE parties SET mode = ? WHERE party_id = ?", [
+          data.selectedValue,
+          data.partyId,
+        ]);
 
         // Broadcast mode change to all party members
         io.to(`party:${data.partyId}`).emit("mode-change", {
@@ -188,10 +188,10 @@ function initSocket({ io, COOKIE_SECRET, db }) {
 
       try {
         // Update party map in database
-        await require("./sql").runQuery(
-          "UPDATE parties SET map = ? WHERE party_id = ?",
-          [data.selectedValue, data.partyId]
-        );
+        await db.runQuery("UPDATE parties SET map = ? WHERE party_id = ?", [
+          data.selectedValue,
+          data.partyId,
+        ]);
 
         // Broadcast map change to all party members
         io.to(`party:${data.partyId}`).emit("map-change", {
@@ -280,7 +280,7 @@ function initSocket({ io, COOKIE_SECRET, db }) {
     // For routes to move sockets after DB changes:
     async moveUserSocketToParty(username, partyId) {
       try {
-        const rows = await require("./sql").runQuery(
+        const rows = await db.runQuery(
           "SELECT socket_id FROM users WHERE name = ? LIMIT 1",
           [username]
         );
@@ -298,7 +298,7 @@ function initSocket({ io, COOKIE_SECRET, db }) {
     },
     async moveUserSocketToLobby(username) {
       try {
-        const rows = await require("./sql").runQuery(
+        const rows = await db.runQuery(
           "SELECT socket_id FROM users WHERE name = ? LIMIT 1",
           [username]
         );
