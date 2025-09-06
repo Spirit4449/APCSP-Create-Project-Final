@@ -5,8 +5,6 @@ const { emitRoster, selectPartyById } = require("../helpers/party");
 const { PARTY_STATUS } = require("../../server/helpers/constants");
 const { createMatchmaking } = require("./matchmaking");
 
-const HEARTBEAT_SEC = 60; // client sends every 60s (fallback)
-const OFFLINE_FALLBACK_SEC = 120; // if no heartbeat for 2 minutes, mark offline
 const DISCONNECT_GRACE_MS = 3000; // avoid flicker on slower reloads
 
 // Presence tracking (multi-tab safe)
@@ -21,11 +19,6 @@ function readSignedCookieFromHandshake(socket, cookieName, secret) {
   if (!raw || !raw.startsWith("s:")) return null; // cookie-parser format
   const unsigned = cookieSignature.unsign(raw.slice(2), secret);
   return unsigned || null;
-}
-
-function currentPartyRoom(socket) {
-  for (const room of socket.rooms) if (room.startsWith("party:")) return room;
-  return null;
 }
 
 /**
@@ -46,10 +39,10 @@ function initSocket({ io, COOKIE_SECRET, db }) {
     db,
     teamSizeByMode: {
       // Define per-mode team sizes; adjust to your modes
-      // Example: mode 1 -> 1v1, mode 2 -> 2v2, mode 4 -> 4v4
+      // Example: mode 1 -> 1v1, mode 2 -> 2v2, mode 3 -> 3v3
       1: 1,
       2: 2,
-      4: 4,
+      3: 3,
     },
   });
   // unified presence setter
@@ -67,12 +60,12 @@ function initSocket({ io, COOKIE_SECRET, db }) {
     } catch (_) {}
   }
 
-  // auth: attach user row from signed cookie
+  // auth: attach user row from signed cookie (middleware)
   io.use(async (socket, next) => {
     try {
       const userIdStr = readSignedCookieFromHandshake(
         socket,
-        "user_id",
+        "user_id", // this cookie stores the user ID
         COOKIE_SECRET
       );
       if (!userIdStr) {
@@ -89,7 +82,7 @@ function initSocket({ io, COOKIE_SECRET, db }) {
   });
 
   io.on("connection", async (socket) => {
-    const user = socket.data.user;
+    const user = socket.data.user; // returns from middleware
     const userId = user?.user_id;
     const username = user?.name;
 
@@ -102,9 +95,9 @@ function initSocket({ io, COOKIE_SECRET, db }) {
 
     // Track this socket for the user and mark online
     if (username) {
-      const t = pendingOffline.get(username);
-      if (t) {
-        clearTimeout(t);
+      const timeoutId = pendingOffline.get(username);
+      if (timeoutId) {
+        clearTimeout(timeoutId);
         pendingOffline.delete(username);
       }
       let set = userSockets.get(username);
@@ -115,26 +108,26 @@ function initSocket({ io, COOKIE_SECRET, db }) {
       set.add(socket.id);
 
       try {
-        const pid = await db.getPartyIdByName(username);
-        await setPresence(username, "online", pid || null);
-      } catch (_) {}
-    }
-
-    // auto-join room
-    try {
-      const partyId = username ? await db.getPartyIdByName(username) : null;
-      if (partyId) {
-        socket.join(`party:${partyId}`);
-        socket.emit("party:joined", { partyId });
-      } else {
-        socket.join("lobby");
-        socket.emit("party:joined", { partyId: null });
+        // mark online if not already and emit to others
+        const partyId = await db.getPartyIdByName(username);
+        await setPresence(username, "online", partyId || null);
+        // auto-join room
+        if (partyId) {
+          socket.join(`party:${partyId}`);
+          socket.emit("party:joined", { partyId });
+        } else {
+          socket.join("lobby");
+          socket.emit("party:joined", { partyId: null });
+        }
+      } catch (e) {
+        console.warn(
+          "Could not set online presence or auto join party:",
+          e?.message
+        );
       }
-    } catch (e) {
-      console.error("Error auto-joining party:", e);
     }
 
-    // fallback heartbeat
+    // heartbeat
     socket.on("heartbeat", async (partyId) => {
       const uname = socket.data.user?.name;
       if (!uname || !partyId) return;
@@ -169,7 +162,7 @@ function initSocket({ io, COOKIE_SECRET, db }) {
             await mm.queueLeave({ partyId, userId: null });
           } catch (_) {}
           // mm.queueLeave already sets party to IDLE; helper call not required here
-          io.to(`party:${partyId}`).emit("match:cancelled");
+          io.to(`party:${partyId}`).emit("match:cancelled", { reason: `${uname} cancelled matchmaking` });
         }
 
         // If everyone in party is ready, update party status and notify clients to show overlay
@@ -244,8 +237,8 @@ function initSocket({ io, COOKIE_SECRET, db }) {
           } catch (_) {}
         }
         // Inform relevant clients to hide the matchmaking overlay
-        if (pid) io.to(`party:${pid}`).emit("match:cancelled");
-        else socket.emit("match:cancelled");
+        if (pid) io.to(`party:${pid}`).emit("match:cancelled", { reason: `${uname} cancelled matchmaking` });
+        else socket.emit("match:cancelled", { reason: "You cancelled matchmaking" });
       } catch (e) {
         console.warn("queue:leave error:", e?.message);
       }
@@ -287,10 +280,10 @@ function initSocket({ io, COOKIE_SECRET, db }) {
         const pid = await db.getPartyIdByName(uname);
         await mm.handleDisconnect(uname);
         if (pid) {
-          io.to(`party:${pid}`).emit("match:cancelled");
+          io.to(`party:${pid}`).emit("match:cancelled", { reason: `${uname} disconnected or went offline` });
           console.log(`[cancel][emit] bye user=${uname} party=${pid}`);
         } else {
-          socket.emit("match:cancelled");
+          socket.emit("match:cancelled", { reason: `${uname} disconnected or went offline` });
           console.log(`[cancel][emit] bye-solo user=${uname}`);
         }
       } catch (_) {}
@@ -534,7 +527,7 @@ function initSocket({ io, COOKIE_SECRET, db }) {
           try {
             await mm.queueLeave({ partyId, userId: null });
           } catch (_) {}
-          io.to(`party:${partyId}`).emit("match:cancelled");
+          io.to(`party:${partyId}`).emit("match:cancelled", { reason: `A new user joined the party` });
           console.log(
             `[cancel][party] composition changed -> cancelled party ${partyId}`
           );

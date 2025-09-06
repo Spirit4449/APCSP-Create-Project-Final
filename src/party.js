@@ -274,7 +274,13 @@ export function socketInit() {
   });
 
   // Match cancelled (e.g., ready timeout) -> hide overlay
-  socket.on("match:cancelled", () => {
+  socket.on("match:cancelled", (data) => {
+    const overlay = document.getElementById("matchmaking-overlay");
+    if (data?.reason && overlay && !overlay.classList.contains("hidden")) {
+      sonner("Cancelled matchmaking", data.reason, null, null, {
+        duration: 3000,
+      });
+    }
     hideMatchmakingOverlay();
     // Reset your local ready state so next click sets Ready (prevents double-click issue)
     try {
@@ -822,6 +828,7 @@ function resetSlotToRandom(slot) {
 
 // Import setLobbyBackground function
 import { setLobbyBackground } from "./index.js";
+import { over } from "lodash";
 
 // ---------------------------
 // Ready toggle + overlay UI

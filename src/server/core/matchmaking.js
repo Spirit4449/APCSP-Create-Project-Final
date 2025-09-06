@@ -35,14 +35,21 @@ function createMatchmaking({ io, db, teamSizeByMode }) {
     if (teamSizeByMode && teamSizeByMode[String(m)])
       return teamSizeByMode[String(m)];
     // fallback: use mode as team size if looks sane; else default to 1
-    return Number.isFinite(m) && m > 0 && m <= 5 ? m : 1;
+    const fallback = Number.isFinite(m) && m > 0 && m <= 5 ? m : 1;
+    console.log(
+      `[mm] unknown mode=${mode}, using fallback team size of ${fallback}`
+    );
+    return fallback;
   }
 
   function computeUserMMRFromRow(user) {
     try {
       const levels = user?.char_levels ? JSON.parse(user.char_levels) : {};
       const vals = Object.values(levels).map((n) => Number(n) || 0);
-      const unlocked = vals.length;
+
+      // Level 0 means not unlocked; count only level >= 1 as unlocked
+      const unlocked = vals.filter((n) => n >= 1).length;
+
       const avg = vals.length
         ? vals.reduce((a, b) => a + b, 0) / vals.length
         : 0;
@@ -296,10 +303,8 @@ function createMatchmaking({ io, db, teamSizeByMode }) {
       .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
     // compute dynamic window based on oldest item
     const oldest = sorted[0];
-    const window = Math.min(
-      400,
-      100 + Math.floor(ageSeconds(oldest) * (50 / 15))
-    );
+    // Expand MMR window by 15 per second of age, capped at 400. Takes 30s to reach max.
+    const window = Math.min(400, 100 + Math.floor(ageSeconds(oldest) * 15));
 
     // Small DFS to pack counts exactly into S,S while keeping MMR diff <= window
     const used = new Set();
@@ -470,7 +475,7 @@ function createMatchmaking({ io, db, teamSizeByMode }) {
         clearInterval(state.timer);
         readyStates.delete(matchId);
         if (state.ready.size !== state.userIds.size) {
-          await cancelMatch(matchId, "ready-timeout");
+          await cancelMatch(matchId, "One or more players disconnected or timed out");
           console.log(
             `[ready:timeout] #${matchId} ready=${state.ready.size}/${state.userIds.size}`
           );

@@ -72,7 +72,10 @@ export function sonner(
   // Insert newest first
   wrap.insertBefore(el, wrap.firstChild || null);
 
-  // Animate in next frame
+  // Force initial styles to apply before toggling .show to ensure smooth transition
+  // This avoids the first-toast jank when the container is created this frame.
+  void el.offsetWidth; // style/layout flush
+  // Animate in next frame for extra safety
   requestAnimationFrame(() => {
     el.classList.add("show");
     bar.classList.add("anim");

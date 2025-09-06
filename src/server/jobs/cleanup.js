@@ -16,7 +16,9 @@ function startCleanupJobs({ db, io }) {
       }
       for (const [partyId, names] of byParty.entries()) {
         console.log(
-          `[inactive] Removed ${names.length} member(s) from party ${partyId}: ${names.join(", ")}`
+          `[inactive] Removed ${
+            names.length
+          } member(s) from party ${partyId}: ${names.join(", ")}`
         );
       }
       console.log(`[cleanup] Processing ${byParty.size} affected parties`);
@@ -33,7 +35,9 @@ function startCleanupJobs({ db, io }) {
         const expired = await db.deleteExpiredGuestsAndMemberships();
         if (expired && expired.count > 0) {
           console.log(
-            `[inactive] Deleted ${expired.count} expired guest account(s): ${expired.names.join(", ")}`
+            `[inactive] Deleted ${
+              expired.count
+            } expired guest account(s): ${expired.names.join(", ")}`
           );
           for (const partyId of expired.partyIds || []) {
             await updateOrDeleteParty(io, db, partyId);
@@ -73,7 +77,64 @@ function startCleanupJobs({ db, io }) {
   setInterval(inactiveStatus, 1000 * 60);
   inactiveStatus();
 
-  return { cleanupInactiveMembers, inactiveStatus };
+  // Cleanup long-running matches (> 5 minutes) every 30 minutes and on start
+  let _matchCleanupRunning = false;
+  async function cleanupLongMatches() {
+    if (_matchCleanupRunning) return;
+    _matchCleanupRunning = true;
+    try {
+      // Find live matches older than 5 minutes
+      const old = await db.runQuery(
+        "SELECT match_id FROM matches WHERE status='live' AND created_at < (NOW() - INTERVAL 5 MINUTE)"
+      );
+      if (!old || !old.length) return;
+
+      const ids = old.map((r) => r.match_id);
+      const ph = ids.map(() => "?").join(",");
+
+      // Mark matches completed
+      await db.runQuery(
+        `UPDATE matches SET status='completed' WHERE match_id IN (${ph})`,
+        ids
+      );
+
+      // Reset any involved parties back to idle
+      let partyIds = [];
+      try {
+        const parties = await db.runQuery(
+          `SELECT DISTINCT party_id FROM match_participants WHERE match_id IN (${ph}) AND party_id IS NOT NULL`,
+          ids
+        );
+        partyIds = parties.map((p) => p.party_id).filter(Boolean);
+        if (partyIds.length) {
+          const ph2 = partyIds.map(() => "?").join(",");
+          await db.runQuery(
+            `UPDATE parties SET status='idle' WHERE party_id IN (${ph2})`,
+            partyIds
+          );
+        }
+      } catch (_) {}
+
+      // Remove participants for these matches to reflect completion
+      await db.runQuery(
+        `DELETE FROM match_participants WHERE match_id IN (${ph})`,
+        ids
+      );
+
+      console.log(
+        `[match:cleanup] Completed ${ids.length} match(es) >5m; reset ${partyIds.length} party(ies)`
+      );
+    } catch (e) {
+      console.warn("match cleanup failed:", e?.message || e);
+    } finally {
+      _matchCleanupRunning = false;
+    }
+  }
+
+  setInterval(cleanupLongMatches, 1000 * 60 * 30);
+  cleanupLongMatches();
+
+  return { cleanupInactiveMembers, inactiveStatus, cleanupLongMatches };
 }
 
 module.exports = { startCleanupJobs };
