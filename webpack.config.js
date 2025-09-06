@@ -7,7 +7,6 @@ module.exports = {
   entry: {
     game: "./src/game.js",
     party: "./src/party.js",
-    matchmaking: "./src/matchmaking.js",
     welcome: "./src/welcome.js",
     index: "./src/index.js",
     signup: "./src/signup.js",

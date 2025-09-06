@@ -828,7 +828,6 @@ function resetSlotToRandom(slot) {
 
 // Import setLobbyBackground function
 import { setLobbyBackground } from "./index.js";
-import { over } from "lodash";
 
 // ---------------------------
 // Ready toggle + overlay UI

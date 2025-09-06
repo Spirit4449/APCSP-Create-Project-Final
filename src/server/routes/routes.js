@@ -60,6 +60,20 @@ function registerRoutes({ app, io, db, auth, pageRoot, distDir }) {
     res.sendFile(path.join(pageRoot, "index.html"));
   });
 
+  app.get("/game/:matchid", async (req, res) => {
+    try {
+      const rows = await db.runQuery(
+        "SELECT 1 FROM matches WHERE match_id = ? LIMIT 1",
+        [req.params.matchid]
+      );
+      if (!rows.length)
+        return res.sendFile(path.join(distDir, "Errors", "gamenotfound.html"));
+    } catch (e) {
+      console.error(e);
+    }
+    res.sendFile(path.join(pageRoot, "game.html"));
+  });
+
   app.post("/status", async (req, res) => {
     try {
       const [user, userType] = await getOrCreateCurrentUser(req, res, {
@@ -84,21 +98,21 @@ function registerRoutes({ app, io, db, auth, pageRoot, distDir }) {
     }
   });
 
-  app.get("/me", async (req, res) => {
-    try {
-      const user = await requireCurrentUser(req, res);
-      if (!user)
-        return res.json({ authenticated: false, name: "Guest", isGuest: true });
-      res.json({
-        authenticated: true,
-        name: user.name,
-        isGuest: isGuest(user),
-        userId: user.user_id,
-      });
-    } catch (e) {
-      res.json({ authenticated: false, name: "Guest", isGuest: true });
-    }
-  });
+  // app.get("/me", async (req, res) => {
+  //   try {
+  //     const user = await requireCurrentUser(req, res);
+  //     if (!user)
+  //       return res.json({ authenticated: false, name: "Guest", isGuest: true });
+  //     res.json({
+  //       authenticated: true,
+  //       name: user.name,
+  //       isGuest: isGuest(user),
+  //       userId: user.user_id,
+  //     });
+  //   } catch (e) {
+  //     res.json({ authenticated: false, name: "Guest", isGuest: true });
+  //   }
+  // });
 
   app.post("/create-party", async (req, res) => {
     try {
@@ -334,6 +348,11 @@ function registerRoutes({ app, io, db, auth, pageRoot, distDir }) {
       console.error("/leave-party", e);
       res.status(500).json({ error: "Internal error" });
     }
+  });
+
+  // Game
+  app.post("/gamedata", async (req, res) => {
+    
   });
 
   // Auth

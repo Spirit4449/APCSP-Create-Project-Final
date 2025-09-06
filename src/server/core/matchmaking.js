@@ -497,6 +497,7 @@ function createMatchmaking({ io, db, teamSizeByMode }) {
         } catch (_) {}
         console.log(`[match:live] #${matchId}`);
         // Optionally, move sockets to a game room: io.to(...) if you manage per-match rooms.
+        
       }
     };
     state.timer = setInterval(check, 250);
