@@ -109,7 +109,7 @@ function registerRoutes({ app, io, db, auth, pageRoot, distDir }) {
         await q("DELETE FROM party_members WHERE name = ?", [username]);
         const insertParty = await q(
           "INSERT INTO parties (status, mode, map) VALUES (?, ?, ?)",
-          ["lobby", 1, 1]
+          ["cancelled", 1, 1]
         );
         const newPartyId = insertParty.insertId;
         await q(

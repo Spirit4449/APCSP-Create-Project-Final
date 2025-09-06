@@ -2,6 +2,7 @@
 const cookie = require("cookie");
 const cookieSignature = require("cookie-signature");
 const { emitRoster, selectPartyById } = require("../helpers/party");
+const { createMatchmaking } = require("./matchmaking");
 
 const HEARTBEAT_SEC = 60; // client sends every 60s (fallback)
 const OFFLINE_FALLBACK_SEC = 120; // if no heartbeat for 2 minutes, mark offline
@@ -38,6 +39,18 @@ function currentPartyRoom(socket) {
  *    }
  */
 function initSocket({ io, COOKIE_SECRET, db }) {
+  // Matchmaking controller (power-saved loop inside)
+  const mm = createMatchmaking({
+    io,
+    db,
+    teamSizeByMode: {
+      // Define per-mode team sizes; adjust to your modes
+      // Example: mode 1 -> 1v1, mode 2 -> 2v2, mode 4 -> 4v4
+      1: 1,
+      2: 2,
+      4: 4,
+    },
+  });
   // unified presence setter
   async function setPresence(name, status, partyId = null) {
     try {
@@ -128,6 +141,106 @@ function initSocket({ io, COOKIE_SECRET, db }) {
         await db.updateLastSeen(partyId, uname);
       } catch (e) {
         console.warn("heartbeat error:", e?.message);
+      }
+    });
+
+    // Ready status toggle (party-only broadcast)
+    socket.on("ready:status", async (data) => {
+      try {
+        const uname = socket.data.user?.name;
+        if (!uname) return;
+        const isReady = !!data?.ready;
+        const providedPartyId = data?.partyId ? Number(data.partyId) : null;
+        const partyId = providedPartyId || (await db.getPartyIdByName(uname));
+        // For non-party, do not emit; optionally update self-only UI client-side
+        if (!partyId) return;
+
+        await db.setUserStatus(uname, isReady ? "ready" : "online");
+        io.to(`party:${partyId}`).emit("status:update", {
+          partyId,
+          name: uname,
+          status: isReady ? "ready" : "online",
+        });
+
+        // If everyone in party is ready, update party status and notify clients to show overlay
+        const members = await db.fetchPartyMembersDetailed(partyId);
+        const allReady =
+          members.length > 0 &&
+          members.every(
+            (m) => String(m.status || "").toLowerCase() === "ready"
+          );
+        if (allReady) {
+          await db.runQuery(
+            "UPDATE parties SET status='matchmaking' WHERE party_id = ?",
+            [partyId]
+          );
+          io.to(`party:${partyId}`).emit("party:matchmaking:start", {
+            partyId,
+          });
+          console.log(`[party:${partyId}] all-ready -> matchmaking`);
+          // Auto-enqueue this party using its current mode/map
+          try {
+            const row = await db.runQuery(
+              "SELECT mode, map FROM parties WHERE party_id = ? LIMIT 1",
+              [partyId]
+            );
+            const mode = row[0]?.mode || 1;
+            const map = row[0]?.map || 1;
+            await mm.queueJoin({ partyId, mode, map });
+          } catch (err) {
+            console.warn("enqueue failed:", err?.message);
+          }
+        }
+      } catch (e) {
+        console.warn("ready:status error:", e?.message);
+      }
+    });
+
+    // Queue join/leave and ready-ack events
+    socket.on("queue:join", async (data) => {
+      try {
+        const uname = socket.data.user?.name;
+        const userId = socket.data.user?.user_id || null;
+        const { mode, map, side, partyId } = data || {};
+        // prefer server-truth for partyId
+        const pid =
+          partyId || (uname ? await db.getPartyIdByName(uname) : null);
+        await mm.queueJoin({
+          partyId: pid || null,
+          userId: pid ? null : userId,
+          mode,
+          map,
+          side,
+        });
+      } catch (e) {
+        console.warn("queue:join error:", e?.message);
+        socket.emit("queue:error", {
+          message: e?.message || "queue join failed",
+        });
+      }
+    });
+
+    socket.on("queue:leave", async (data) => {
+      try {
+        const uname = socket.data.user?.name;
+        const userId = socket.data.user?.user_id || null;
+        const pid = uname ? await db.getPartyIdByName(uname) : null;
+        await mm.queueLeave({
+          partyId: pid || null,
+          userId: pid ? null : userId,
+        });
+      } catch (e) {
+        console.warn("queue:leave error:", e?.message);
+      }
+    });
+
+    socket.on("ready:ack", async ({ matchId }) => {
+      try {
+        const userId = socket.data.user?.user_id;
+        if (!userId || !matchId) return;
+        await mm.handleReadyAck(userId, matchId);
+      } catch (e) {
+        console.warn("ready:ack error:", e?.message);
       }
     });
 
@@ -316,6 +429,11 @@ function initSocket({ io, COOKIE_SECRET, db }) {
         }, DISCONNECT_GRACE_MS);
         pendingOffline.set(username, timer);
       }
+
+      // Also drop any queued ticket for this user's party (prevents stale tickets)
+      try {
+        await mm.handleDisconnect(username);
+      } catch (_) {}
     });
   });
 

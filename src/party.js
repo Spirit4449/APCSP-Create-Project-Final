@@ -111,6 +111,8 @@ export function socketInit() {
 
       // Render minimal 1v1 view into the existing two slots if available
       renderPartyMembers(data);
+      // Re-bind ready toggle on your slot after DOM updates
+      initReadyToggle();
     } catch (e) {
       console.warn("[socket] party:members render failed", e);
     }
@@ -170,6 +172,37 @@ export function socketInit() {
 
     // Update lobby background
     setLobbyBackground(data.selectedValue || data.map);
+  });
+
+  // Party-wide: everyone ready -> show matchmaking overlay
+  socket.on("party:matchmaking:start", ({ partyId }) => {
+    if (currentPartyId && String(partyId) !== String(currentPartyId)) return;
+    showMatchmakingOverlay();
+  });
+
+  // When a match is found, update overlay and auto-ack ready for this client
+  socket.on("match:found", (payload) => {
+    // payload: { matchId, mode, map, yourTeam, players }
+    const statusEl = document.getElementById("mm-status");
+    if (statusEl) statusEl.textContent = "Match found. Waiting for players...";
+    if (payload?.matchId) {
+      socket.emit("ready:ack", { matchId: payload.matchId });
+    }
+  });
+
+  // Queue error -> notify and hide overlay (useful for solo flow)
+  socket.on("queue:error", (err) => {
+    try {
+      hideMatchmakingOverlay();
+      if (err?.message) {
+        sonner("Queue error", err.message, "error");
+      }
+    } catch (_) {}
+  });
+
+  // Match cancelled (e.g., ready timeout) -> hide overlay
+  socket.on("match:cancelled", () => {
+    hideMatchmakingOverlay();
   });
 
   // // Member join/leave events
@@ -675,6 +708,99 @@ function resetSlotToRandom(slot) {
 // Import setLobbyBackground function
 import { setLobbyBackground } from "./index.js";
 
+// ---------------------------
+// Ready toggle + overlay UI
+// ---------------------------
+
+// Attach a click handler to current user's status to toggle ready.
+export function initReadyToggle() {
+  const partyId = checkIfInParty();
+  const readyBtn = document.getElementById("ready");
+  if (!readyBtn) return;
+  // Avoid duplicate bindings when UI re-renders
+  if (readyBtn.dataset.bound === "1") return;
+  readyBtn.dataset.bound = "1";
+
+  readyBtn.addEventListener("click", () => {
+    // Find current user's status element to update optimistically
+    const selfSlot = Array.from(
+      document.querySelectorAll(".character-slot")
+    ).find((s) => s.dataset.isCurrentUser === "true");
+    const statusEl = selfSlot?.querySelector(".status");
+    if (!statusEl) return;
+
+    const cur = (statusEl.textContent || "").toLowerCase();
+    const nextReady = !cur.includes("ready");
+
+    // Optimistic local update
+    statusEl.textContent = nextReady ? "Ready" : "Online";
+    statusEl.className = `status ${nextReady ? "ready" : "not-ready"}`;
+
+    if (partyId) {
+      // Party flow: server will show overlay when all ready
+      socket.emit("ready:status", { partyId, ready: nextReady });
+    } else {
+      // Solo flow: directly join/leave the queue and control overlay locally
+      if (nextReady) {
+        const mode = Number(document.getElementById("mode")?.value) || 1;
+        const map = Number(document.getElementById("map")?.value) || 1;
+        const side = "team1"; // default; server may flip if needed
+        socket.emit("queue:join", { mode, map, side });
+        showMatchmakingOverlay();
+      } else {
+        socket.emit("queue:leave");
+        hideMatchmakingOverlay();
+      }
+    }
+  });
+}
+
+function ensureOverlay() {
+  let ov = document.getElementById("matchmaking-overlay");
+  if (ov) return ov;
+  ov = document.createElement("div");
+  ov.id = "matchmaking-overlay";
+  ov.style.position = "fixed";
+  ov.style.inset = "0";
+  ov.style.background = "rgba(0,0,0,0.8)";
+  ov.style.zIndex = "9999";
+  ov.style.color = "#fff";
+  ov.style.fontFamily = "'Poppins', sans-serif";
+  ov.style.alignItems = "center";
+  ov.style.justifyContent = "center";
+  ov.style.textAlign = "center";
+  ov.style.gap = "12px";
+  ov.style.flexDirection = "column";
+  ov.style.padding = "24px";
+  ov.style.boxSizing = "border-box";
+
+  const inner = document.createElement("div");
+  inner.style.maxWidth = "640px";
+  inner.style.margin = "0 auto";
+  inner.innerHTML = `
+    <h2 style="margin:0 0 8px 0;font-weight:700;">Matchmaking</h2>
+    <div id="mm-status" style="opacity:.9">Waiting for opponent...</div>
+  `;
+  ov.appendChild(inner);
+  ov.style.flex = "1";
+  ov.style.display = "none"; // hidden initially
+
+  document.body.appendChild(ov);
+  return ov;
+}
+
+export function showMatchmakingOverlay() {
+  const ov = ensureOverlay();
+  ov.style.display = "flex";
+  const statusEl = document.getElementById("mm-status");
+  if (statusEl) statusEl.textContent = "Everyone ready. Searching...";
+}
+
+export function hideMatchmakingOverlay() {
+  const ov = document.getElementById("matchmaking-overlay");
+  if (ov) ov.style.display = "none";
+}
+
 // Lightweight debug hook to test rendering without server
 if (typeof window !== "undefined") {
   window.__partyDebug = {
@@ -707,6 +833,9 @@ if (typeof window !== "undefined") {
         mode,
         members: others.slice(0, mode * 2),
       });
+    },
+    showMM() {
+      showMatchmakingOverlay();
     },
   };
 }
