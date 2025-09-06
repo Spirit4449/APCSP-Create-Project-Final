@@ -20,6 +20,25 @@ import "./styles/sonner.css";
 let userData = null;
 let guest = false;
 
+/**
+ * Check if user has a live match and redirect to it
+ * @param {Object} statusData - Response from /status endpoint
+ */
+function checkForLiveMatch(statusData) {
+  if (statusData?.live_match_id) {
+    console.log(`User has live match: ${statusData.live_match_id}`);
+    // For testing, comment out the redirect
+    // window.location.href = `/game/${statusData.live_match_id}`;
+    
+    // Temporarily just log for testing
+    console.log(`Would redirect to: /game/${statusData.live_match_id}`);
+    
+    // sonner("Live Match Found", `Redirecting to match ${statusData.live_match_id}`, "info");
+    return true;
+  }
+  return false;
+}
+
 const existingPartyId = checkIfInParty();
 
 // Fetch user status upfront
@@ -33,6 +52,12 @@ const statusPromise = fetch("/status", {
     if (data?.userData) {
       userData = data.userData;
       guest = data.guest;
+      
+      // Check for live match first
+      if (checkForLiveMatch(data)) {
+        return; // Stop processing if redirecting to live match
+      }
+      
       if (data.party_id && !existingPartyId) {
         // If user is in a party but not at the url, send them to it
         console.log("User is in party:", data.party_id);

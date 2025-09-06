@@ -1,8 +1,10 @@
-// Minimal singleton Socket.IO client
-// <script src="/socket.io/socket.io.js"></script> is already included in index.html
-const socket = window.io({
+// Minimal singleton Socket.IO client (bundled)
+import { io } from "socket.io-client";
+
+const socket = io({
   // same-origin; send cookies so the server can read signed cookie
   withCredentials: true,
   autoConnect: true,
 });
+
 export default socket;

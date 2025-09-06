@@ -4,6 +4,7 @@ const cookieSignature = require("cookie-signature");
 const { emitRoster, selectPartyById } = require("../helpers/party");
 const { PARTY_STATUS } = require("../../server/helpers/constants");
 const { createMatchmaking } = require("./matchmaking");
+const { createGameHub } = require("./gameHub");
 
 const DISCONNECT_GRACE_MS = 3000; // avoid flicker on slower reloads
 
@@ -33,10 +34,14 @@ function readSignedCookieFromHandshake(socket, cookieName, secret) {
  *    }
  */
 function initSocket({ io, COOKIE_SECRET, db }) {
+  // Game hub for managing active game rooms
+  const gameHub = createGameHub({ io, db });
+  
   // Matchmaking controller (power-saved loop inside)
   const mm = createMatchmaking({
     io,
     db,
+    gameHub, // Pass game hub to matchmaking
     teamSizeByMode: {
       // Define per-mode team sizes; adjust to your modes
       // Example: mode 1 -> 1v1, mode 2 -> 2v2, mode 3 -> 3v3
@@ -254,6 +259,47 @@ function initSocket({ io, COOKIE_SECRET, db }) {
       }
     });
 
+    // Game room events
+    socket.on("game:join", async (data) => {
+      try {
+        const { matchId } = data;
+        if (!matchId) {
+          socket.emit('game:error', { message: 'Match ID required' });
+          return;
+        }
+        
+        const success = await gameHub.handlePlayerJoin(socket, Number(matchId));
+        if (!success) {
+          console.warn(`Failed to join game room ${matchId} for ${socket.data.user?.name}`);
+        }
+      } catch (e) {
+        console.warn("game:join error:", e?.message);
+        socket.emit('game:error', { message: 'Failed to join game' });
+      }
+    });
+
+    socket.on("game:input", (inputData) => {
+      // Forward to game room - the game room will validate the socket is in the room
+      // This is handled in gameRoom.js via the setupPlayerSocket method
+    });
+
+    socket.on("game:action", (actionData) => {
+      // Forward to game room - handled in gameRoom.js
+    });
+
+    // Game-related handlers
+    socket.on("game:join", async ({ matchId }) => {
+      try {
+        const success = await gameHub.handlePlayerJoin(socket, matchId);
+        if (success) {
+          console.log(`[Game] Player ${socket.data.user?.name} joined match ${matchId}`);
+        }
+      } catch (e) {
+        console.warn("game:join error:", e?.message);
+        socket.emit("game:error", { message: e?.message || "Failed to join game" });
+      }
+    });
+
     // Proactive offline on tab close/navigation
     socket.on("client:bye", async () => {
       const uname = socket.data.user?.name;
@@ -275,9 +321,26 @@ function initSocket({ io, COOKIE_SECRET, db }) {
         pendingOffline.set(uname, timer);
       }
 
-      // Best-effort cancel any active queue for this user/party and notify others
+      // Check if user has a live match before canceling queue
       try {
         const pid = await db.getPartyIdByName(uname);
+        
+        // Check if user is in a live match
+        const liveMatches = await db.runQuery(
+          `SELECT m.match_id FROM matches m 
+           JOIN match_participants mp ON m.match_id = mp.match_id 
+           JOIN users u ON u.user_id = mp.user_id 
+           WHERE u.name = ? AND m.status = 'live'`,
+          [uname]
+        );
+        
+        if (liveMatches.length > 0) {
+          // User is transitioning to a live game, don't cancel
+          console.log(`[transition] user=${uname} moving to live game, not canceling`);
+          return;
+        }
+        
+        // Normal disconnect - cancel queue
         await mm.handleDisconnect(uname);
         if (pid) {
           io.to(`party:${pid}`).emit("match:cancelled", { reason: `${uname} disconnected or went offline` });
@@ -441,6 +504,30 @@ function initSocket({ io, COOKIE_SECRET, db }) {
       } catch (_) {}
 
       if (!username) return;
+      
+      // Check if user is in a live match before cleaning up game rooms
+      try {
+        const liveMatches = await db.runQuery(
+          `SELECT m.match_id FROM matches m 
+           JOIN match_participants mp ON m.match_id = mp.match_id 
+           JOIN users u ON u.user_id = mp.user_id 
+           WHERE u.name = ? AND m.status = 'live'`,
+          [username]
+        );
+        
+        if (liveMatches.length === 0) {
+          // No live matches, safe to clean up game rooms
+          const stats = gameHub.getStats();
+          for (const roomInfo of stats.rooms) {
+            await gameHub.handlePlayerLeave(socket, roomInfo.matchId);
+          }
+        } else {
+          console.log(`[disconnect] user=${username} has live match, not cleaning up game rooms yet`);
+        }
+      } catch (e) {
+        console.warn("game disconnect cleanup error:", e?.message);
+      }
+
       const set = userSockets.get(username);
       if (set) set.delete(socket.id);
       const hasAny = !!(set && set.size > 0);
@@ -455,16 +542,26 @@ function initSocket({ io, COOKIE_SECRET, db }) {
 
       // Also drop any queued ticket for this user's party (prevents stale tickets)
       try {
-        await mm.handleDisconnect(username);
-        const pid = await db.getPartyIdByName(username);
-        if (pid) {
-          io.to(`party:${pid}`).emit("match:cancelled");
-          console.log(
-            `[cancel][emit] disconnect user=${username} party=${pid}`
-          );
-        } else {
-          // Solo: nothing to broadcast; their own overlay will hide on disconnect
-          console.log(`[cancel] disconnect user=${username} solo`);
+        // Only cancel queue if not transitioning to live match
+        const liveMatches = await db.runQuery(
+          `SELECT m.match_id FROM matches m 
+           JOIN match_participants mp ON m.match_id = mp.match_id 
+           JOIN users u ON u.user_id = mp.user_id 
+           WHERE u.name = ? AND m.status = 'live'`,
+          [username]
+        );
+        
+        if (liveMatches.length === 0) {
+          await mm.handleDisconnect(username);
+          const pid = await db.getPartyIdByName(username);
+          if (pid) {
+            io.to(`party:${pid}`).emit("match:cancelled");
+            console.log(
+              `[cancel][emit] disconnect user=${username} party=${pid}`
+            );
+          } else {
+            console.log(`[cancel] disconnect user=${username} solo`);
+          }
         }
       } catch (_) {}
     });

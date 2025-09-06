@@ -6,6 +6,7 @@ const {
   emitRoster,
   updateOrDeleteParty,
 } = require("../helpers/party");
+const { getUserLiveMatch } = require("../helpers/match");
 const { PARTY_STATUS } = require("../helpers/constants");
 
 function registerRoutes({ app, io, db, auth, pageRoot, distDir }) {
@@ -35,6 +36,7 @@ function registerRoutes({ app, io, db, auth, pageRoot, distDir }) {
       const [user] = await getOrCreateCurrentUser(req, res, {
         autoCreate: true,
       });
+      
       const rows = await db.runQuery(
         "SELECT party_id FROM party_members WHERE name = ? LIMIT 1",
         [user?.name]
@@ -48,6 +50,10 @@ function registerRoutes({ app, io, db, auth, pageRoot, distDir }) {
 
   app.get("/party/:partyid", async (req, res) => {
     try {
+      const [user] = await getOrCreateCurrentUser(req, res, {
+        autoCreate: true,
+      });
+      
       const rows = await db.runQuery(
         "SELECT 1 FROM parties WHERE party_id = ? LIMIT 1",
         [req.params.partyid]
@@ -83,12 +89,17 @@ function registerRoutes({ app, io, db, auth, pageRoot, distDir }) {
         "SELECT party_id FROM party_members WHERE name = ? LIMIT 1",
         [user.name]
       );
+      
+      // Check for live match
+      const liveMatchId = await getUserLiveMatch(db, user?.user_id);
+      
       res.json({
         success: true,
         userData: user,
         newlyCreated: userType === "new",
         guest: isGuest(user),
         party_id: partyRows[0]?.party_id ?? null,
+        live_match_id: liveMatchId,
       });
     } catch (e) {
       console.error(e);
@@ -352,7 +363,77 @@ function registerRoutes({ app, io, db, auth, pageRoot, distDir }) {
 
   // Game
   app.post("/gamedata", async (req, res) => {
-    
+    try {
+      const user = await requireCurrentUser(req, res);
+      if (!user) return;
+
+      const { matchId } = req.body;
+      if (!matchId) {
+        return res.status(400).json({
+          success: false,
+          error: "Match ID required"
+        });
+      }
+
+      // Verify user is participant in this match
+      const participantRows = await db.runQuery(
+        "SELECT mp.*, m.mode, m.map, m.status FROM match_participants mp JOIN matches m ON m.match_id = mp.match_id WHERE mp.match_id = ? AND mp.user_id = ?",
+        [matchId, user.user_id]
+      );
+
+      if (!participantRows.length) {
+        return res.status(403).json({
+          success: false,
+          error: "You are not a participant in this match"
+        });
+      }
+
+      const participant = participantRows[0];
+      
+      // Check if match is live
+      if (participant.status !== 'live') {
+        return res.status(400).json({
+          success: false,
+          error: "Match is not live yet"
+        });
+      }
+
+      // Get all participants for this match
+      const allParticipants = await db.runQuery(
+        `SELECT mp.user_id, mp.party_id, mp.team, mp.char_class, u.name 
+         FROM match_participants mp 
+         JOIN users u ON u.user_id = mp.user_id 
+         WHERE mp.match_id = ?`,
+        [matchId]
+      );
+
+      // Prepare game data
+      const gameData = {
+        matchId: Number(matchId),
+        mode: participant.mode,
+        map: participant.map,
+        yourTeam: participant.team,
+        yourCharacter: participant.char_class,
+        players: allParticipants.map(p => ({
+          user_id: p.user_id,
+          name: p.name,
+          team: p.team,
+          char_class: p.char_class
+        }))
+      };
+
+      res.json({
+        success: true,
+        gameData
+      });
+
+    } catch (error) {
+      console.error("gamedata error:", error);
+      res.status(500).json({
+        success: false,
+        error: "Internal server error"
+      });
+    }
   });
 
   // Auth

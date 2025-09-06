@@ -16,7 +16,7 @@
  */
 const { PARTY_STATUS } = require("../../server/helpers/constants");
 
-function createMatchmaking({ io, db, teamSizeByMode }) {
+function createMatchmaking({ io, db, teamSizeByMode, gameHub = null }) {
   let loop = null;
   const readyStates = new Map(); // matchId -> { userIds:Set, ready:Set, timer, deadline }
   const lastProgress = new Map(); // ticket_id -> lastFound
@@ -58,6 +58,37 @@ function createMatchmaking({ io, db, teamSizeByMode }) {
     } catch (_) {
       return 0;
     }
+  }
+
+  async function getMatchDataForGameRoom(matchId) {
+    const matchRows = await db.runQuery(
+      "SELECT mode, map FROM matches WHERE match_id = ? LIMIT 1",
+      [matchId]
+    );
+    
+    const participantRows = await db.runQuery(
+      `SELECT mp.user_id, mp.party_id, mp.team, mp.char_class, u.name 
+       FROM match_participants mp 
+       JOIN users u ON u.user_id = mp.user_id 
+       WHERE mp.match_id = ?`,
+      [matchId]
+    );
+
+    if (!matchRows.length || !participantRows.length) {
+      throw new Error(`No match data found for match ${matchId}`);
+    }
+
+    return {
+      mode: matchRows[0].mode,
+      map: matchRows[0].map,
+      players: participantRows.map(p => ({
+        user_id: p.user_id,
+        name: p.name,
+        party_id: p.party_id,
+        team: p.team,
+        char_class: p.char_class
+      }))
+    };
   }
 
   async function computePartyMMR(partyId) {
@@ -496,8 +527,34 @@ function createMatchmaking({ io, db, teamSizeByMode }) {
           if (ids.length) await db.setPartiesStatus(ids, PARTY_STATUS.LIVE);
         } catch (_) {}
         console.log(`[match:live] #${matchId}`);
-        // Optionally, move sockets to a game room: io.to(...) if you manage per-match rooms.
         
+        // Create game room when match goes live
+        if (gameHub) {
+          try {
+            // Get match data for the game room
+            const matchData = await getMatchDataForGameRoom(matchId);
+            await gameHub.createGameRoom(matchId, matchData);
+            
+            // Notify players to join game room
+            const userIds = Array.from(state.userIds);
+            const placeholders = userIds.map(() => "?").join(",");
+            const socketRows = await db.runQuery(
+              `SELECT user_id, socket_id FROM users WHERE user_id IN (${placeholders})`,
+              userIds
+            );
+            
+            for (const row of socketRows) {
+              if (row.socket_id) {
+                const socket = io.sockets.sockets.get(row.socket_id);
+                if (socket) {
+                  socket.emit('match:gameReady', { matchId });
+                }
+              }
+            }
+          } catch (error) {
+            console.error(`[match:live] Failed to create game room for match ${matchId}:`, error);
+          }
+        }
       }
     };
     state.timer = setInterval(check, 250);

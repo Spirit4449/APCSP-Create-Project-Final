@@ -254,6 +254,28 @@ export function socketInit() {
     }
   });
 
+  // When match is ready to start, redirect to game
+  socket.on("match:gameReady", async (payload) => {
+    try {
+      const { matchId } = payload;
+      if (!matchId) {
+        console.error("No matchId in gameReady payload");
+        return;
+      }
+
+      console.log("Match ready! Redirecting to game...", matchId);
+      
+      // Store match info for game page
+      sessionStorage.setItem("matchId", matchId);
+      
+      // Redirect to game page using new URL format
+      window.location.href = `/game/${matchId}`;
+    } catch (error) {
+      console.error("Error handling match:gameReady:", error);
+      sonner("Game Error", "Failed to join game", "error");
+    }
+  });
+
   // Queue error -> notify and hide overlay (useful for solo flow)
   socket.on("queue:error", (err) => {
     try {
