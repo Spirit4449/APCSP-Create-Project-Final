@@ -6,6 +6,7 @@ const {
   emitRoster,
   updateOrDeleteParty,
 } = require("../helpers/party");
+const { PARTY_STATUS } = require("../helpers/constants");
 
 function registerRoutes({ app, io, db, auth, pageRoot, distDir }) {
   const { getOrCreateCurrentUser, requireCurrentUser, isGuest } = auth;
@@ -109,7 +110,7 @@ function registerRoutes({ app, io, db, auth, pageRoot, distDir }) {
         await q("DELETE FROM party_members WHERE name = ?", [username]);
         const insertParty = await q(
           "INSERT INTO parties (status, mode, map) VALUES (?, ?, ?)",
-          ["cancelled", 1, 1]
+          [PARTY_STATUS.IDLE, 1, 1]
         );
         const newPartyId = insertParty.insertId;
         await q(
@@ -162,6 +163,7 @@ function registerRoutes({ app, io, db, auth, pageRoot, distDir }) {
         "SELECT team FROM party_members WHERE party_id = ? AND name = ? LIMIT 1",
         [partyId, username]
       );
+      let joinedNow = false;
 
       if (!existing.length) {
         const [[{ cnt: currentCount }]] = await conn.query(
@@ -216,6 +218,7 @@ function registerRoutes({ app, io, db, auth, pageRoot, distDir }) {
             [partyId, username, chosen]
           );
           console.log(`[party] join`, { username, partyId, team: chosen });
+          joinedNow = true;
         } catch (e) {
           if (!(e && e.code === "ER_DUP_ENTRY")) {
             await conn.rollback();
@@ -243,6 +246,15 @@ function registerRoutes({ app, io, db, auth, pageRoot, distDir }) {
       await conn.commit();
 
       await req.app.locals.socketApi.moveUserSocketToParty(username, partyId);
+      // If a new member joined, cancel any active matchmaking for this party (and their solo ticket if any)
+      if (joinedNow) {
+        try {
+          await req.app.locals.socketApi.cancelPartyQueue(
+            partyId,
+            user.user_id
+          );
+        } catch (_) {}
+      }
       await emitRoster(io, partyId, party, memberRows);
 
       res.json({
@@ -336,28 +348,22 @@ function registerRoutes({ app, io, db, auth, pageRoot, distDir }) {
       username = typeof username === "string" ? username.trim() : "";
       password = typeof password === "string" ? password : "";
       if (!username || !password) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-            error: "Username and password are required.",
-          });
+        return res.status(400).json({
+          success: false,
+          error: "Username and password are required.",
+        });
       }
       if (!USERNAME_RE.test(username)) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-            error: "Username must be 3-14 chars: letters, numbers, _ . - only.",
-          });
+        return res.status(400).json({
+          success: false,
+          error: "Username must be 3-14 chars: letters, numbers, _ . - only.",
+        });
       }
       if (password.length < MIN_PW || password.length > MAX_PW) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-            error: `Password must be ${MIN_PW}-${MAX_PW} characters.`,
-          });
+        return res.status(400).json({
+          success: false,
+          error: `Password must be ${MIN_PW}-${MAX_PW} characters.`,
+        });
       }
       const user = await requireCurrentUser(req, res);
       if (!user)
@@ -365,12 +371,10 @@ function registerRoutes({ app, io, db, auth, pageRoot, distDir }) {
           .status(400)
           .json({ success: false, error: "Guest session not found." });
       if (user.expires_at === null)
-        return res
-          .status(400)
-          .json({
-            success: false,
-            error: "This account is already permanent.",
-          });
+        return res.status(400).json({
+          success: false,
+          error: "This account is already permanent.",
+        });
       const hash = await bcrypt.hash(password, BCRYPT_ROUNDS);
       try {
         const result = await db.runQuery(
@@ -380,12 +384,10 @@ function registerRoutes({ app, io, db, auth, pageRoot, distDir }) {
           [username, hash, user.user_id]
         );
         if (!result || result.affectedRows !== 1) {
-          return res
-            .status(409)
-            .json({
-              success: false,
-              error: "Unable to complete signup. Please try again.",
-            });
+          return res.status(409).json({
+            success: false,
+            error: "Unable to complete signup. Please try again.",
+          });
         }
       } catch (err) {
         if (err && (err.code === "ER_DUP_ENTRY" || err.errno === 1062)) {
@@ -415,12 +417,10 @@ function registerRoutes({ app, io, db, auth, pageRoot, distDir }) {
       username = typeof username === "string" ? username.trim() : "";
       password = typeof password === "string" ? password : "";
       if (!username || !password) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-            error: "Username and password are required.",
-          });
+        return res.status(400).json({
+          success: false,
+          error: "Username and password are required.",
+        });
       }
       const rows = await db.runQuery(
         "SELECT user_id, name, password FROM users WHERE name = ? AND expires_at IS NULL LIMIT 1",

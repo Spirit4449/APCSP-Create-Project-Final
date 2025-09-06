@@ -1,6 +1,10 @@
 import { sonner } from "./lib/sonner.js";
 import socket from "./socket";
 
+// Track last known party roster to detect joins/leaves
+let __partyRosterNames = null; // Set<string> of member names
+let __partyRosterPartyId = null;
+
 export function checkIfInParty() {
   const pathname = window.location.pathname;
   if (pathname.includes("party")) {
@@ -89,6 +93,9 @@ export function socketInit() {
     console.log("[socket] joined room", partyId ?? "lobby");
     if (partyId) startHeartbeat(partyId);
     else stopHeartbeat();
+    // Reset roster baseline when switching rooms
+    __partyRosterNames = null;
+    __partyRosterPartyId = partyId || null;
   });
 
   // Live roster updates for the party
@@ -102,6 +109,47 @@ export function socketInit() {
       // If this update isn't for our current party page, ignore
       if (currentPartyId && String(data.partyId) !== String(currentPartyId))
         return;
+
+      // Toasts: detect joins/leaves vs previous roster
+      try {
+        const currentUserName =
+          document.getElementById("username-text")?.textContent || "";
+        const newNames = new Set(
+          (Array.isArray(data?.members) ? data.members : [])
+            .map((m) => m?.name)
+            .filter(Boolean)
+        );
+        // Reset baseline on first render or party change
+        if (
+          !__partyRosterNames ||
+          __partyRosterPartyId !== data?.partyId ||
+          !(__partyRosterNames instanceof Set)
+        ) {
+          __partyRosterNames = new Set(newNames);
+          __partyRosterPartyId = data?.partyId || null;
+        } else {
+          // Additions
+          for (const name of newNames) {
+            if (!__partyRosterNames.has(name) && name !== currentUserName) {
+              sonner(`${name} joined your party`, null, "OK", null, {
+                duration: 2000,
+              });
+            }
+          }
+          // Removals
+          for (const old of __partyRosterNames) {
+            if (!newNames.has(old) && old !== currentUserName) {
+              sonner(`${old} left your party`, null, "OK", null, {
+                duration: 2000,
+              });
+            }
+          }
+          // Update baseline
+          __partyRosterNames = new Set(newNames);
+        }
+      } catch (e) {
+        console.warn("[party] roster diff failed", e);
+      }
 
       // Sync mode/map dropdowns if present
       const modeSel = document.getElementById("mode");
@@ -177,14 +225,30 @@ export function socketInit() {
   // Party-wide: everyone ready -> show matchmaking overlay
   socket.on("party:matchmaking:start", ({ partyId }) => {
     if (currentPartyId && String(partyId) !== String(currentPartyId)) return;
+    // Seed with current party roster so found count starts with existing members
+    const mode = Number(document.getElementById("mode")?.value) || 1;
+    const map = Number(document.getElementById("map")?.value) || 1;
+    const members = collectCurrentPartyMembers();
     showMatchmakingOverlay();
+    updateMMOverlay({
+      found: members.length,
+      total: mode * 2,
+      mode,
+      map,
+      players: members,
+    });
   });
 
   // When a match is found, update overlay and auto-ack ready for this client
   socket.on("match:found", (payload) => {
     // payload: { matchId, mode, map, yourTeam, players }
-    const statusEl = document.getElementById("mm-status");
-    if (statusEl) statusEl.textContent = "Match found. Waiting for players...";
+    updateMMOverlay({
+      found: Array.isArray(payload?.players) ? payload.players.length : 0,
+      total: (Number(document.getElementById("mode")?.value) || 1) * 2,
+      mode: payload?.mode,
+      map: payload?.map,
+      players: payload?.players || [],
+    });
     if (payload?.matchId) {
       socket.emit("ready:ack", { matchId: payload.matchId });
     }
@@ -197,12 +261,53 @@ export function socketInit() {
       if (err?.message) {
         sonner("Queue error", err.message, "error");
       }
+      // Reset local ready state so next click attempts to join again
+      const selfSlot = Array.from(
+        document.querySelectorAll(".character-slot")
+      ).find((s) => s.dataset.isCurrentUser === "true");
+      const statusEl = selfSlot?.querySelector(".status");
+      if (statusEl) {
+        statusEl.textContent = "online";
+        statusEl.className = "status online";
+      }
     } catch (_) {}
   });
 
   // Match cancelled (e.g., ready timeout) -> hide overlay
   socket.on("match:cancelled", () => {
     hideMatchmakingOverlay();
+    // Reset your local ready state so next click sets Ready (prevents double-click issue)
+    try {
+      const selfSlot = Array.from(
+        document.querySelectorAll(".character-slot")
+      ).find((s) => s.dataset.isCurrentUser === "true");
+      const statusEl = selfSlot?.querySelector(".status");
+      if (statusEl) {
+        statusEl.textContent = "online";
+        statusEl.className = "status online";
+      }
+    } catch {}
+  });
+
+  // Progressive matching updates: incrementally update overlay found count
+  socket.on("match:progress", (data) => {
+    const currentMode = Number(document.getElementById("mode")?.value) || 1;
+    const currentMap = Number(document.getElementById("map")?.value) || 1;
+    // Only update if it matches the current selection
+    if (Number(data?.mode) !== currentMode || Number(data?.map) !== currentMap)
+      return;
+
+    const overlay = document.getElementById("matchmaking-overlay");
+    if (overlay && overlay.classList.contains("hidden")) {
+      showMatchmakingOverlay();
+    }
+    updateMMOverlay({
+      found: Number(data?.found) || 0,
+      total: Number(data?.total) || currentMode * 2,
+      mode: data?.mode || currentMode,
+      map: data?.map || currentMap,
+      players: collectCurrentPartyMembers(),
+    });
   });
 
   // // Member join/leave events
@@ -430,10 +535,20 @@ function applyMemberToSlot(member, slotId, isYourTeam = null) {
 }
 
 function statusToClass(status) {
-  const s = String(status || "").toLowerCase();
-  if (s === "online") return "ready"; // online should render as green
-  if (s.includes("ready") || s.includes("battle")) return "ready";
-  return "not-ready";
+  const s = String(status || "")
+    .trim()
+    .toLowerCase();
+  // Explicit checks first
+  if (s === "online" || s === "idle") return "online";
+  if (s === "ready") return "ready";
+  if (s === "not ready" || s === "not-ready" || s.startsWith("not "))
+    return "not-ready";
+  // Semantic hints
+  if (s.includes("battle") || s.includes("live")) return "ready";
+  if (s.includes("queue")) return "online";
+  // Fallbacks
+  if (s.includes("ready")) return "ready";
+  return "online";
 }
 
 // ---------------------------
@@ -733,8 +848,8 @@ export function initReadyToggle() {
     const nextReady = !cur.includes("ready");
 
     // Optimistic local update
-    statusEl.textContent = nextReady ? "Ready" : "Online";
-    statusEl.className = `status ${nextReady ? "ready" : "not-ready"}`;
+    statusEl.textContent = nextReady ? "Ready" : "online";
+    statusEl.className = `status ${nextReady ? "ready" : "online"}`;
 
     if (partyId) {
       // Party flow: server will show overlay when all ready
@@ -755,87 +870,130 @@ export function initReadyToggle() {
   });
 }
 
+// Static overlay present in HTML; helpers to show/hide and update it
 function ensureOverlay() {
-  let ov = document.getElementById("matchmaking-overlay");
-  if (ov) return ov;
-  ov = document.createElement("div");
-  ov.id = "matchmaking-overlay";
-  ov.style.position = "fixed";
-  ov.style.inset = "0";
-  ov.style.background = "rgba(0,0,0,0.8)";
-  ov.style.zIndex = "9999";
-  ov.style.color = "#fff";
-  ov.style.fontFamily = "'Poppins', sans-serif";
-  ov.style.alignItems = "center";
-  ov.style.justifyContent = "center";
-  ov.style.textAlign = "center";
-  ov.style.gap = "12px";
-  ov.style.flexDirection = "column";
-  ov.style.padding = "24px";
-  ov.style.boxSizing = "border-box";
-
-  const inner = document.createElement("div");
-  inner.style.maxWidth = "640px";
-  inner.style.margin = "0 auto";
-  inner.innerHTML = `
-    <h2 style="margin:0 0 8px 0;font-weight:700;">Matchmaking</h2>
-    <div id="mm-status" style="opacity:.9">Waiting for opponent...</div>
-  `;
-  ov.appendChild(inner);
-  ov.style.flex = "1";
-  ov.style.display = "none"; // hidden initially
-
-  document.body.appendChild(ov);
-  return ov;
+  return document.getElementById("matchmaking-overlay");
 }
 
 export function showMatchmakingOverlay() {
-  const ov = ensureOverlay();
-  ov.style.display = "flex";
-  const statusEl = document.getElementById("mm-status");
-  if (statusEl) statusEl.textContent = "Everyone ready. Searching...";
+  const overlay = ensureOverlay();
+  if (!overlay) return;
+  overlay.classList.remove("hidden");
+  overlay.setAttribute("aria-hidden", "false");
+  updateMMOverlay({
+    found: collectCurrentPartyMembers().length,
+    total: (Number(document.getElementById("mode")?.value) || 1) * 2,
+    mode: Number(document.getElementById("mode")?.value) || 1,
+    map: Number(document.getElementById("map")?.value) || 1,
+    players: collectCurrentPartyMembers(),
+  });
+  wireCancelButton();
 }
 
 export function hideMatchmakingOverlay() {
-  const ov = document.getElementById("matchmaking-overlay");
-  if (ov) ov.style.display = "none";
+  const overlay = ensureOverlay();
+  if (!overlay) return;
+  overlay.classList.add("hidden");
+  overlay.setAttribute("aria-hidden", "true");
 }
 
-// Lightweight debug hook to test rendering without server
-if (typeof window !== "undefined") {
-  window.__partyDebug = {
-    testRender(mode = 2) {
-      const current =
-        document.getElementById("username-text")?.textContent || "You";
-      const others = [
-        { name: current, team: "team1", status: "Online", char_class: "ninja" },
-        {
-          name: "Ally",
-          team: "team1",
-          status: "Not Ready",
-          char_class: "wizard",
-        },
-        {
-          name: "Enemy1",
-          team: "team2",
-          status: "Ready",
-          char_class: "draven",
-        },
-        {
-          name: "Enemy2",
-          team: "team2",
-          status: "Online",
-          char_class: "thorg",
-        },
-      ];
-      renderPartyMembers({
-        partyId: "debug",
-        mode,
-        members: others.slice(0, mode * 2),
-      });
-    },
-    showMM() {
-      showMatchmakingOverlay();
-    },
-  };
+function mapNameFromId(id) {
+  const mapSel = document.getElementById("map");
+  if (!mapSel) return String(id);
+  const opt = Array.from(mapSel.options).find(
+    (o) => Number(o.value) === Number(id)
+  );
+  return opt ? opt.textContent : String(id);
+}
+
+function modeNameFromId(id) {
+  const modeSel = document.getElementById("mode");
+  if (!modeSel) return `${id}v${id}`;
+  const opt = Array.from(modeSel.options).find(
+    (o) => Number(o.value) === Number(id)
+  );
+  return opt ? opt.textContent : `${id}v${id}`;
+}
+
+function updateMMOverlay({ found, total, mode, map, players }) {
+  const foundEl = document.getElementById("mm-found");
+  const totalEl = document.getElementById("mm-total");
+  const modeEl = document.getElementById("mm-mode");
+  const mapEl = document.getElementById("mm-map");
+  const grid = document.getElementById("mm-players");
+  if (foundEl) foundEl.textContent = String(found ?? 0);
+  if (totalEl) totalEl.textContent = String(total ?? 0);
+  if (modeEl) modeEl.textContent = modeNameFromId(mode ?? 1);
+  if (mapEl) mapEl.textContent = mapNameFromId(map ?? 1);
+  if (grid) {
+    grid.innerHTML = "";
+    const count = Number(total ?? 0) || 0;
+    const playersArr = Array.isArray(players) ? players : [];
+    for (let i = 0; i < count; i++) {
+      const p = playersArr[i];
+      const item = document.createElement("div");
+      item.className = "mm-player" + (p ? "" : " placeholder");
+      if (p) {
+        const img = document.createElement("img");
+        const cls = p.char_class || "ninja";
+        img.src = `/assets/${cls}/body.png`;
+        img.alt = cls;
+        const name = document.createElement("div");
+        name.className = "mm-name";
+        name.textContent = p.name || "Player";
+        item.appendChild(img);
+        item.appendChild(name);
+      } else {
+        const name = document.createElement("div");
+        name.className = "mm-name";
+        name.textContent = "Waiting...";
+        item.appendChild(name);
+      }
+      grid.appendChild(item);
+    }
+  }
+}
+
+function collectCurrentPartyMembers() {
+  // Build a list from current DOM-rendered party roster if available
+  const cards = [];
+  const slots = document.querySelectorAll(".character-slot");
+  for (const slot of slots) {
+    const uname = slot.querySelector(".username")?.textContent || "";
+    const isRandom = uname.trim().toLowerCase().startsWith("random");
+    if (isRandom) continue;
+    const name = uname.replace(" (You)", "");
+    const cls =
+      slot.dataset.character && slot.dataset.character !== "Random"
+        ? slot.dataset.character
+        : null;
+    cards.push({ name, char_class: cls || "ninja" });
+  }
+  return cards;
+}
+
+function wireCancelButton() {
+  const btn = document.getElementById("mm-cancel");
+  if (!btn || btn.dataset.bound === "1") return;
+  btn.dataset.bound = "1";
+  btn.addEventListener("click", () => {
+    hideMatchmakingOverlay();
+    const partyId = checkIfInParty();
+    if (partyId) {
+      socket.emit("ready:status", { partyId, ready: false });
+    } else {
+      socket.emit("queue:leave");
+    }
+    // Also reset local ready state immediately
+    try {
+      const selfSlot = Array.from(
+        document.querySelectorAll(".character-slot")
+      ).find((s) => s.dataset.isCurrentUser === "true");
+      const statusEl = selfSlot?.querySelector(".status");
+      if (statusEl) {
+        statusEl.textContent = "online";
+        statusEl.className = "status online";
+      }
+    } catch {}
+  });
 }

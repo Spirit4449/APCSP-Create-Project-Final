@@ -87,6 +87,37 @@
       <input type="submit" id="ready" value="Ready" />
     </div>
 
+    <!-- Matchmaking Overlay (static element) -->
+    <div id="matchmaking-overlay" class="mm-overlay hidden" aria-hidden="true">
+      <div class="mm-bg" aria-hidden="true"></div>
+      <div
+        class="mm-card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="mm-heading"
+      >
+        <h1 id="mm-heading" class="mm-heading">Matchmaking</h1>
+        <div class="mm-progress">
+          <div class="mm-label">Players Found</div>
+          <div class="mm-count">
+            <span id="mm-found">0</span> / <span id="mm-total">2</span>
+          </div>
+        </div>
+        <div class="mm-info">
+          <div class="mm-meta">
+            <div><strong>Mode:</strong> <span id="mm-mode">1v1</span></div>
+            <div>
+              <strong>Map:</strong> <span id="mm-map">Lushy Peaks</span>
+            </div>
+          </div>
+          <div id="mm-players" class="mm-players-grid" aria-live="polite"></div>
+        </div>
+        <div class="mm-actions">
+          <button id="mm-cancel" class="mm-btn" type="button">Cancel</button>
+        </div>
+      </div>
+    </div>
+
     <script src="/bundles/index.bundle.js"></script>
   </body>
 </html>

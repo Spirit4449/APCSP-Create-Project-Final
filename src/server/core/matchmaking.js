@@ -14,9 +14,12 @@
  * Create matchmaking controller.
  * @param {MatchmakingDeps} deps
  */
+const { PARTY_STATUS } = require("../../server/helpers/constants");
+
 function createMatchmaking({ io, db, teamSizeByMode }) {
   let loop = null;
   const readyStates = new Map(); // matchId -> { userIds:Set, ready:Set, timer, deadline }
+  const lastProgress = new Map(); // ticket_id -> lastFound
   const WORKER = `mm-${process.pid}`;
 
   // Fallback runner if db.withTransaction is unavailable
@@ -95,10 +98,12 @@ function createMatchmaking({ io, db, teamSizeByMode }) {
       if (size <= 0) throw new Error("no players assigned to teams");
       mmr = await computePartyMMR(partyId);
     } else {
-      // solo must choose a side
-      if (side !== "team1" && side !== "team2")
-        throw new Error("solo side required");
-      counts = side === "team1" ? { t1: 1, t2: 0 } : { t1: 0, t2: 1 };
+      // Solo ticket: side optional. Default to team1, but ticket can be flipped during matching.
+      if (side !== "team1" && side !== "team2") {
+        counts = { t1: 1, t2: 0 };
+      } else {
+        counts = side === "team1" ? { t1: 1, t2: 0 } : { t1: 0, t2: 1 };
+      }
       size = 1;
       const u = await db.getUserById(userId);
       if (!u) throw new Error("user not found");
@@ -122,7 +127,8 @@ function createMatchmaking({ io, db, teamSizeByMode }) {
     );
 
     if (partyId)
-      await db.runQuery("UPDATE parties SET status='queued' WHERE party_id=?", [
+      await db.runQuery("UPDATE parties SET status=? WHERE party_id=?", [
+        PARTY_STATUS.QUEUED,
         partyId,
       ]);
     console.log(
@@ -142,7 +148,8 @@ function createMatchmaking({ io, db, teamSizeByMode }) {
       [id]
     );
     if (partyId)
-      await db.runQuery("UPDATE parties SET status=NULL WHERE party_id=?", [
+      await db.runQuery("UPDATE parties SET status=? WHERE party_id=?", [
+        PARTY_STATUS.IDLE,
         partyId,
       ]);
     console.log(
@@ -209,6 +216,9 @@ function createMatchmaking({ io, db, teamSizeByMode }) {
             )
             .join(",")}`
         );
+        // Emit progressive updates so parties/solos see incremental filling
+        await emitProgressForBucket(Number(modeStr), Number(mapStr), items, S);
+
         // try repeatedly while possible in this bucket
         // Avoid tight loop: cap attempts
         let attempts = 0;
@@ -221,10 +231,60 @@ function createMatchmaking({ io, db, teamSizeByMode }) {
             if (idx >= 0) items.splice(idx, 1);
           });
           await assembleAndReady(Number(modeStr), Number(mapStr), group);
+          // Update progress for remaining tickets in this bucket
+          if (items.length) {
+            await emitProgressForBucket(
+              Number(modeStr),
+              Number(mapStr),
+              items,
+              S
+            );
+          }
         }
       }
     } catch (e) {
       console.warn("[mm] tick error:", e?.message);
+    }
+  }
+
+  async function emitProgressForBucket(mode, map, items, S) {
+    if (!items || !items.length) return;
+    // Show total players queued for this (mode,map), capped at S*2
+    const totalPlayers = Math.min(
+      items.reduce(
+        (acc, t) => acc + Number(t.size || t.team1_count + t.team2_count || 0),
+        0
+      ),
+      S * 2
+    );
+    const payload = { mode, map, found: totalPlayers, total: S * 2 };
+
+    // Prepare solo sockets lookup once per bucket
+    const soloIds = items.filter((t) => t.user_id).map((t) => t.user_id);
+    let soloSockets = new Map();
+    if (soloIds.length) {
+      try {
+        const placeholders = soloIds.map(() => "?").join(",");
+        const rows = await db.runQuery(
+          `SELECT user_id, socket_id FROM users WHERE user_id IN (${placeholders})`,
+          soloIds
+        );
+        soloSockets = new Map(rows.map((r) => [r.user_id, r.socket_id]));
+      } catch (_) {}
+    }
+
+    for (const t of items) {
+      const prev = lastProgress.get(t.ticket_id);
+      if (prev === payload.found) continue; // avoid spam if unchanged
+      lastProgress.set(t.ticket_id, payload.found);
+      if (t.party_id) {
+        io.to(`party:${t.party_id}`).emit("match:progress", payload);
+      } else if (t.user_id) {
+        const sid = soloSockets.get(t.user_id);
+        if (!sid) continue;
+        const sock = io.sockets.sockets.get(sid);
+        if (sock) sock.emit("match:progress", payload);
+      }
     }
   }
 
@@ -336,6 +396,8 @@ function createMatchmaking({ io, db, teamSizeByMode }) {
 
     const tickets = picks.map((p) => p.ticket);
     const matchId = await commitMatch({ mode, map, tickets, players });
+    // Clear progress cache for claimed tickets
+    ids.forEach((id) => lastProgress.delete(id));
     const size1 = players.filter((p) => p.team === "team1").length;
     const size2 = players.filter((p) => p.team === "team2").length;
     const mmrDelta = Math.abs(
@@ -416,9 +478,18 @@ function createMatchmaking({ io, db, teamSizeByMode }) {
       } else if (state.ready.size === state.userIds.size) {
         clearInterval(state.timer);
         readyStates.delete(matchId);
-        await db.runQuery("UPDATE matches SET status='live' WHERE match_id=?", [
-          matchId,
-        ]);
+        await db.runQuery(
+          "UPDATE matches SET status='live' WHERE match_id= ?",
+          [matchId]
+        );
+        try {
+          const rows = await db.runQuery(
+            "SELECT DISTINCT party_id FROM match_participants WHERE match_id = ? AND party_id IS NOT NULL",
+            [matchId]
+          );
+          const ids = rows.map((r) => r.party_id);
+          if (ids.length) await db.setPartiesStatus(ids, PARTY_STATUS.LIVE);
+        } catch (_) {}
         console.log(`[match:live] #${matchId}`);
         // Optionally, move sockets to a game room: io.to(...) if you manage per-match rooms.
       }
@@ -459,13 +530,13 @@ function createMatchmaking({ io, db, teamSizeByMode }) {
         const ph = ids.map(() => "?").join(",");
         await q(`DELETE FROM match_tickets WHERE ticket_id IN (${ph})`, ids);
       }
-      if (partyIds.length) {
-        const ph = partyIds.map(() => "?").join(",");
+      if (partyIds.length)
         await q(
-          `UPDATE parties SET status='queued' WHERE party_id IN (${ph})`,
-          partyIds
+          `UPDATE parties SET status=? WHERE party_id IN (${partyIds
+            .map(() => "?")
+            .join(",")})`,
+          [PARTY_STATUS.READY_CHECK, ...partyIds]
         );
-      }
       return matchId;
     });
   }
@@ -475,6 +546,15 @@ function createMatchmaking({ io, db, teamSizeByMode }) {
       "UPDATE matches SET status='cancelled' WHERE match_id=?",
       [matchId]
     );
+    // Reset any involved parties to idle
+    try {
+      const rows = await db.runQuery(
+        "SELECT DISTINCT party_id FROM match_participants WHERE match_id = ? AND party_id IS NOT NULL",
+        [matchId]
+      );
+      const ids = rows.map((r) => r.party_id);
+      if (ids.length) await db.setPartiesStatus(ids, PARTY_STATUS.IDLE);
+    } catch (_) {}
     // Notify participants (best-effort)
     try {
       const rows = await db.runQuery(
@@ -503,6 +583,27 @@ function createMatchmaking({ io, db, teamSizeByMode }) {
       console.log(`[queue] remove p=${partyId} reason=disconnect name=${name}`);
       await maybeStopLoop();
     }
+
+    // Also remove solo ticket for this user if present
+    try {
+      const u = await db.runQuery(
+        "SELECT user_id FROM users WHERE name=? LIMIT 1",
+        [name]
+      );
+      const userId = u[0]?.user_id || null;
+      if (userId) {
+        const r = await db.runQuery(
+          "DELETE FROM match_tickets WHERE user_id=?",
+          [userId]
+        );
+        if (r?.affectedRows) {
+          console.log(
+            `[queue] remove u=${userId} reason=disconnect name=${name}`
+          );
+          await maybeStopLoop();
+        }
+      }
+    } catch (_) {}
   }
 
   async function invalidatePartyTicket(partyId) {

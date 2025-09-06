@@ -2,6 +2,7 @@
 const cookie = require("cookie");
 const cookieSignature = require("cookie-signature");
 const { emitRoster, selectPartyById } = require("../helpers/party");
+const { PARTY_STATUS } = require("../../server/helpers/constants");
 const { createMatchmaking } = require("./matchmaking");
 
 const HEARTBEAT_SEC = 60; // client sends every 60s (fallback)
@@ -162,6 +163,15 @@ function initSocket({ io, COOKIE_SECRET, db }) {
           status: isReady ? "ready" : "online",
         });
 
+        // If a member un-readies while party was matchmaking, cancel queue and hide overlay
+        if (!isReady) {
+          try {
+            await mm.queueLeave({ partyId, userId: null });
+          } catch (_) {}
+          // mm.queueLeave already sets party to IDLE; helper call not required here
+          io.to(`party:${partyId}`).emit("match:cancelled");
+        }
+
         // If everyone in party is ready, update party status and notify clients to show overlay
         const members = await db.fetchPartyMembersDetailed(partyId);
         const allReady =
@@ -170,10 +180,9 @@ function initSocket({ io, COOKIE_SECRET, db }) {
             (m) => String(m.status || "").toLowerCase() === "ready"
           );
         if (allReady) {
-          await db.runQuery(
-            "UPDATE parties SET status='matchmaking' WHERE party_id = ?",
-            [partyId]
-          );
+          try {
+            await db.setPartyStatus(partyId, PARTY_STATUS.QUEUED);
+          } catch (_) {}
           io.to(`party:${partyId}`).emit("party:matchmaking:start", {
             partyId,
           });
@@ -229,6 +238,14 @@ function initSocket({ io, COOKIE_SECRET, db }) {
           partyId: pid || null,
           userId: pid ? null : userId,
         });
+        if (pid) {
+          try {
+            await db.setPartyStatus(pid, PARTY_STATUS.IDLE);
+          } catch (_) {}
+        }
+        // Inform relevant clients to hide the matchmaking overlay
+        if (pid) io.to(`party:${pid}`).emit("match:cancelled");
+        else socket.emit("match:cancelled");
       } catch (e) {
         console.warn("queue:leave error:", e?.message);
       }
@@ -264,6 +281,19 @@ function initSocket({ io, COOKIE_SECRET, db }) {
         }, DISCONNECT_GRACE_MS);
         pendingOffline.set(uname, timer);
       }
+
+      // Best-effort cancel any active queue for this user/party and notify others
+      try {
+        const pid = await db.getPartyIdByName(uname);
+        await mm.handleDisconnect(uname);
+        if (pid) {
+          io.to(`party:${pid}`).emit("match:cancelled");
+          console.log(`[cancel][emit] bye user=${uname} party=${pid}`);
+        } else {
+          socket.emit("match:cancelled");
+          console.log(`[cancel][emit] bye-solo user=${uname}`);
+        }
+      } catch (_) {}
     });
 
     // Mode change handler
@@ -433,6 +463,16 @@ function initSocket({ io, COOKIE_SECRET, db }) {
       // Also drop any queued ticket for this user's party (prevents stale tickets)
       try {
         await mm.handleDisconnect(username);
+        const pid = await db.getPartyIdByName(username);
+        if (pid) {
+          io.to(`party:${pid}`).emit("match:cancelled");
+          console.log(
+            `[cancel][emit] disconnect user=${username} party=${pid}`
+          );
+        } else {
+          // Solo: nothing to broadcast; their own overlay will hide on disconnect
+          console.log(`[cancel] disconnect user=${username} solo`);
+        }
       } catch (_) {}
     });
   });
@@ -485,6 +525,30 @@ function initSocket({ io, COOKIE_SECRET, db }) {
         sock.emit("party:joined", { partyId: null });
       } catch (e) {
         console.warn("moveUserSocketToLobby failed:", e?.message);
+      }
+    },
+    // Cancel any active matchmaking when party composition changes (e.g., someone joins)
+    async cancelPartyQueue(partyId, userId = null) {
+      try {
+        if (partyId) {
+          try {
+            await mm.queueLeave({ partyId, userId: null });
+          } catch (_) {}
+          io.to(`party:${partyId}`).emit("match:cancelled");
+          console.log(
+            `[cancel][party] composition changed -> cancelled party ${partyId}`
+          );
+        }
+        if (userId) {
+          try {
+            await mm.queueLeave({ partyId: null, userId });
+            console.log(
+              `[cancel][solo] user ${userId} solo ticket, if any, removed`
+            );
+          } catch (_) {}
+        }
+      } catch (e) {
+        console.warn("cancelPartyQueue failed:", e?.message);
       }
     },
   };

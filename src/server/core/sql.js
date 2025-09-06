@@ -101,6 +101,36 @@ async function clearUserSocketIfMatch(userId, socketId) {
   }
 }
 
+// Set a party's status to a given value
+async function setPartyStatus(partyId, status) {
+  return runQuery("UPDATE parties SET status = ? WHERE party_id = ?", [
+    status,
+    partyId,
+  ]);
+}
+
+// Get a user's socket_id by userId
+async function getUserSocketId(userId) {
+  const rows = await runQuery(
+    "SELECT socket_id FROM users WHERE user_id = ? LIMIT 1",
+    [userId]
+  );
+  return rows[0]?.socket_id || null;
+}
+
+// Set the same status for multiple parties at once
+async function setPartiesStatus(partyIds, status) {
+  const ids = Array.from(
+    new Set((partyIds || []).map((x) => Number(x)).filter(Boolean))
+  );
+  if (!ids.length) return { affectedRows: 0 };
+  const ph = ids.map(() => "?").join(",");
+  return runQuery(`UPDATE parties SET status = ? WHERE party_id IN (${ph})`, [
+    status,
+    ...ids,
+  ]);
+}
+
 async function updateLastSeen(partyId, username) {
   const result = await runQuery(
     "UPDATE party_members SET last_seen = NOW() WHERE party_id = ? AND name = ?",
@@ -214,4 +244,7 @@ module.exports = {
   setUserStatus,
   setUserSocketId,
   clearUserSocketIfMatch,
+  setPartyStatus,
+  setPartiesStatus,
+  getUserSocketId,
 };

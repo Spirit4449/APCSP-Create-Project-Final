@@ -36,8 +36,9 @@ CREATE TABLE IF NOT EXISTS match_participants (
   KEY ix_mp_party (party_id)
 );
 
--- Optional: tighten parties.status to 4 states (comment out if not ready)
-ALTER TABLE parties MODIFY status ENUM('queued','live','completed','cancelled') NULL;
+-- Optional: align parties.status to the canonical 4 states used by the app
+-- If you haven't normalized existing values yet, run the 2025-09-06_party_status_enum.sql first.
+ALTER TABLE parties MODIFY COLUMN status ENUM('idle','queued','ready_check','live') NOT NULL DEFAULT 'idle';
 
 -- Down migration
 -- DROP TABLE IF EXISTS match_participants;

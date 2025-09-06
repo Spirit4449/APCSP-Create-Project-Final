@@ -10,6 +10,11 @@ body {
   overflow: hidden;
 }
 
+/* Utility */
+.hidden {
+  display: none !important;
+}
+
 .flex {
   display: flex;
   align-items: center;
@@ -317,7 +322,13 @@ h3 {
 }
 
 .status.ready {
-  background: linear-gradient(135deg, #2ed573, #1e90ff);
+  background: linear-gradient(135deg, #26b662, #5aaf2c);
+  color: white;
+}
+
+.status.online {
+  /* Distinct from ready: calming blue/cyan */
+  background: linear-gradient(135deg, #1e90ff, #00bcd4);
   color: white;
 }
 
@@ -637,5 +648,265 @@ h3 {
   .status {
     font-size: min(1.5vw, 8px);
     bottom: -8px;
+  }
+}
+
+/* Matchmaking Overlay */
+.mm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mm-bg {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: linear-gradient(
+    120deg,
+    rgba(18, 22, 40, 0.67),
+    rgba(10, 12, 22, 0.7)
+  );
+}
+.mm-bg::before {
+  content: "";
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: radial-gradient(
+    ellipse at center,
+    rgba(0, 212, 255, 0.5) 0%,
+    rgba(0, 212, 255, 0.5) 40%,
+    transparent 70%
+  );
+  transform: rotate(25deg);
+  animation: beamPulse 6s ease-in-out infinite;
+  pointer-events: none; /* don’t block clicks */
+}
+
+@keyframes beamPulse {
+  0% {
+    opacity: 0;
+    transform: rotate(25deg) scale(0.8);
+  }
+  40% {
+    opacity: 0.6;
+    transform: rotate(25deg) scale(1);
+  }
+  60% {
+    opacity: 0.6;
+    transform: rotate(25deg) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: rotate(25deg) scale(1.2);
+  }
+}
+
+.mm-card {
+  position: relative;
+  width: 95vw;
+  height: 90vh;
+  padding: 28px;
+  display: flex;
+  flex-direction: column;
+  align-items: center; /* centers the grid block itself */
+  background: linear-gradient(
+    135deg,
+    rgba(24, 28, 48, 0.85),
+    rgba(16, 18, 30, 0.85)
+  );
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.45),
+    0 0 0 1px rgba(0, 212, 255, 0.15) inset;
+  color: #e8f2ff;
+  backdrop-filter: blur(10px);
+  animation: pulse 2.2s ease-in-out infinite;
+}
+
+.mm-heading {
+  margin: 0;
+  font-size: clamp(20px, 10vw, 80px);
+  font-weight: 800;
+  letter-spacing: 0.3px;
+  text-align: center;
+  text-shadow: 0 2px 10px rgba(0, 212, 255, 0.3);
+}
+
+.mm-progress {
+  display: grid;
+  grid-template-columns: 1fr;
+  justify-items: center;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+.mm-label {
+  font-size: clamp(14px, 3vw, 24px);
+  opacity: 0.9;
+}
+
+.mm-label::after {
+  content: "";
+  animation: dots 2s steps(4, end) infinite;
+}
+
+@keyframes dots {
+  0% {
+    content: "";
+  }
+  25% {
+    content: ".";
+  }
+  50% {
+    content: "..";
+  }
+  75% {
+    content: "...";
+  }
+  100% {
+    content: "";
+  }
+}
+.mm-count {
+  font-size: clamp(28px, 5vw, 46px);
+  font-weight: 800;
+  letter-spacing: 1px;
+  margin-bottom: 10px;
+}
+
+.mm-info {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+  width: 80%;
+}
+
+.mm-meta {
+  display: flex;
+  gap: 18px;
+  justify-content: center;
+  flex-wrap: wrap;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.06),
+    rgba(255, 255, 255, 0.02)
+  );
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.mm-players-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 180px));
+  gap: 12px;
+
+  /* center the grid as a whole and the items within each cell */
+  justify-content: center; /* centers the columns block */
+  justify-items: center; /* centers item content inside each cell */
+
+  /* optional: keep it from getting too wide */
+  width: 100%;
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+.mm-player {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 8px;
+  border-radius: 10px;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.06),
+    rgba(255, 255, 255, 0.02)
+  );
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  min-height: 140px;
+  animation: popIn 260ms ease-out;
+}
+
+.mm-player img {
+  width: 60px;
+  height: 60px;
+  object-fit: contain;
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.5));
+}
+
+.mm-player .mm-name {
+  margin-top: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #f0f6ff;
+}
+
+.mm-player.placeholder {
+  opacity: 0.5;
+  border-style: dashed;
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.mm-actions {
+  position: absolute;
+  bottom: 28px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  justify-content: center;
+}
+
+.mm-btn {
+  background: linear-gradient(135deg, #eac809, #d4b000);
+  border-radius: 8px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  padding: 12px 88px;
+  font-size: 16px;
+  font-weight: 700;
+  font-family: "Poppins", sans-serif;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  color: white;
+  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 4px 15px rgba(234, 200, 9, 0.35);
+}
+
+.mm-btn:hover {
+  background: linear-gradient(135deg, #d4b000, #c4a000);
+  box-shadow: 0 6px 20px rgba(234, 200, 9, 0.55);
+}
+
+/* Animations */
+@keyframes popIn {
+  0% {
+    transform: scale(0.9);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+@keyframes pulse {
+  0% {
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.45),
+      0 0 0 1px rgba(0, 212, 255, 0.1) inset;
+  }
+  50% {
+    box-shadow: 0 12px 46px rgba(0, 0, 0, 0.5),
+      0 0 0 1px rgba(0, 212, 255, 0.2) inset;
+  }
+  100% {
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.45),
+      0 0 0 1px rgba(0, 212, 255, 0.1) inset;
   }
 }

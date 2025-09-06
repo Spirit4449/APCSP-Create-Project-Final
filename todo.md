@@ -6,3 +6,7 @@
 + Bushes and trees that change in sprite image per map. Can hide in them. Give items when destroyed
 + Zoomed out map for larger lobbies
 + Trophies and leaderboard
+
+
++ Fix player cards not showing on matchmaking update
++ Database live matches and participants cleanup

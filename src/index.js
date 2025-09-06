@@ -6,6 +6,8 @@ import {
   socketInit,
   renderPartyMembers,
   initializeModeDropdown,
+  showMatchmakingOverlay,
+  initReadyToggle,
 } from "./party.js";
 import {
   initializeCharacterSelect,
@@ -138,13 +140,14 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   initializeModeDropdown(); // Initialize mode dropdown functionality for both party and lobby
 
+  // Initialize socket events for both party and solo flows once DOM is ready
+  socketInit();
+
   if (existingPartyId) {
     createPartyButton.textContent = "Leave Party";
     createPartyButton.style.background =
       "linear-gradient(135deg, #d63939, #cf4545)";
     createPartyButton.addEventListener("click", leaveParty);
-
-    socketInit(); // Initialize all socket events
 
     // Ensure current Invite badges are visible and clickable in party
     inviteStatus.forEach((status) => {
@@ -175,6 +178,10 @@ document.addEventListener("DOMContentLoaded", async () => {
         );
       });
     }
+    // Bind Ready button in party flow
+    try {
+      initReadyToggle();
+    } catch {}
   } else {
     createPartyButton.addEventListener("click", createParty);
 
@@ -198,6 +205,10 @@ document.addEventListener("DOMContentLoaded", async () => {
       yourSlot.className = "character-slot player-display";
       yourSlot.dataset.character = userData.char_class || "ninja";
     }
+    // Bind Ready button in solo flow
+    try {
+      initReadyToggle();
+    } catch {}
   }
 });
 
