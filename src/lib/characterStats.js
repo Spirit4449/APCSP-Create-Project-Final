@@ -64,13 +64,13 @@ export const characterStats = {
     body: {
       widthShrink: 220,
       heightShrink: 195,
-      offsetXFromHalf: 90,
+      offsetXFromHalf: 0,
       offsetY: 113,
       // Shift body to the right when facing left to cover staff
       flipOffset: 5,
     },
     description: "A dark sorcerer who manipulates shadows.",
-    unlockPrice: 280
+    unlockPrice: 280,
   },
 };
 
@@ -125,8 +125,14 @@ if (typeof module !== "undefined" && module.exports) {
     DEFAULT_CHARACTER,
     LEVEL_CAP,
     characterStats,
+    getCharacterStats,
+    getAllCharacters,
+    getFreeCharacters,
     defaultCharacterList,
+    getHealth,
+    getDamage,
+    getSpecialDamage,
     upgradePrice,
-    unlockPrice
+    unlockPrice,
   };
 }

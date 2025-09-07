@@ -36,7 +36,7 @@ function registerRoutes({ app, io, db, auth, pageRoot, distDir }) {
       const [user] = await getOrCreateCurrentUser(req, res, {
         autoCreate: true,
       });
-      
+
       const rows = await db.runQuery(
         "SELECT party_id FROM party_members WHERE name = ? LIMIT 1",
         [user?.name]
@@ -53,7 +53,7 @@ function registerRoutes({ app, io, db, auth, pageRoot, distDir }) {
       const [user] = await getOrCreateCurrentUser(req, res, {
         autoCreate: true,
       });
-      
+
       const rows = await db.runQuery(
         "SELECT 1 FROM parties WHERE party_id = ? LIMIT 1",
         [req.params.partyid]
@@ -89,10 +89,10 @@ function registerRoutes({ app, io, db, auth, pageRoot, distDir }) {
         "SELECT party_id FROM party_members WHERE name = ? LIMIT 1",
         [user.name]
       );
-      
+
       // Check for live match
       const liveMatchId = await getUserLiveMatch(db, user?.user_id);
-      
+
       res.json({
         success: true,
         userData: user,
@@ -364,6 +364,12 @@ function registerRoutes({ app, io, db, auth, pageRoot, distDir }) {
   // Game
   app.post("/gamedata", async (req, res) => {
     try {
+      // Lazy import to avoid server startup circular deps
+      const {
+        getHealth,
+        getDamage,
+        getSpecialDamage,
+      } = require("../../lib/characterStats.js");
       const user = await requireCurrentUser(req, res);
       if (!user) return;
 
@@ -371,7 +377,7 @@ function registerRoutes({ app, io, db, auth, pageRoot, distDir }) {
       if (!matchId) {
         return res.status(400).json({
           success: false,
-          error: "Match ID required"
+          error: "Match ID required",
         });
       }
 
@@ -384,26 +390,26 @@ function registerRoutes({ app, io, db, auth, pageRoot, distDir }) {
       if (!participantRows.length) {
         return res.status(403).json({
           success: false,
-          error: "You are not a participant in this match"
+          error: "You are not a participant in this match",
         });
       }
 
       const participant = participantRows[0];
-      
+
       // Check if match is live
-      if (participant.status !== 'live') {
+      if (participant.status !== "live") {
         return res.status(400).json({
           success: false,
-          error: "Match is not live yet"
+          error: "Match is not live yet",
         });
       }
 
-      // Get all participants for this match
+      // Get all participants for this match; levels are stored per-character in users.char_levels (JSON)
       const allParticipants = await db.runQuery(
-        `SELECT mp.user_id, mp.party_id, mp.team, mp.char_class, u.name 
-         FROM match_participants mp 
-         JOIN users u ON u.user_id = mp.user_id 
-         WHERE mp.match_id = ?`,
+        `SELECT mp.user_id, mp.party_id, mp.team, mp.char_class, u.name, u.char_levels
+           FROM match_participants mp
+           JOIN users u ON u.user_id = mp.user_id
+          WHERE mp.match_id = ?`,
         [matchId]
       );
 
@@ -412,26 +418,45 @@ function registerRoutes({ app, io, db, auth, pageRoot, distDir }) {
         matchId: Number(matchId),
         mode: participant.mode,
         map: participant.map,
+        yourName: user.name,
         yourTeam: participant.team,
         yourCharacter: participant.char_class,
-        players: allParticipants.map(p => ({
-          user_id: p.user_id,
-          name: p.name,
-          team: p.team,
-          char_class: p.char_class
-        }))
+        players: allParticipants.map((p) => {
+          let level = 1;
+          try {
+            const levels =
+              typeof p.char_levels === "string"
+                ? JSON.parse(p.char_levels || "{}")
+                : p.char_levels || {};
+            const lv = levels && levels[p.char_class];
+            level = Number(lv) > 0 ? Number(lv) : 1;
+          } catch (_) {
+            level = 1;
+          }
+          return {
+            user_id: p.user_id,
+            name: p.name,
+            team: p.team,
+            char_class: p.char_class,
+            level,
+            stats: {
+              health: getHealth(p.char_class, level),
+              damage: getDamage(p.char_class, level),
+              specialDamage: getSpecialDamage(p.char_class, level),
+            },
+          };
+        }),
       };
 
       res.json({
         success: true,
-        gameData
+        gameData,
       });
-
     } catch (error) {
       console.error("gamedata error:", error);
       res.status(500).json({
         success: false,
-        error: "Internal server error"
+        error: "Internal server error",
       });
     }
   });

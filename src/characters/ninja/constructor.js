@@ -133,9 +133,13 @@ class Ninja {
     const p = this.player;
     const direction = p.flipX ? -1 : 1;
 
-    const stats =
-      (this.constructor.getStats && this.constructor.getStats()) || {};
-    const damage = stats.damage;
+    // Prefer server-provided level-based damage; fallback to base stats
+    const session = (window && window.__MATCH_SESSION__) || {};
+    const damage =
+      (session.stats && typeof session.stats.damage === "number"
+        ? session.stats.damage
+        : ((this.constructor.getStats && this.constructor.getStats()) || {})
+            .baseDamage) || 1000;
 
     const fired = this.performDefaultAttack(() => {
       // Play throw anim and sfx

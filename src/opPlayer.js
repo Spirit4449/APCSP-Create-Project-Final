@@ -55,6 +55,7 @@ export default class OpPlayer {
       this.opponent.setScale(stats.spriteScale);
     }
     this.opponent.body.allowGravity = false;
+    this.opponent.setCollideWorldBounds(false); // no world-bounds collision for remote visuals
     this.opponent.anims.play(
       resolveAnimKey(this.scene, this.character, "idle"),
       true
@@ -81,13 +82,13 @@ export default class OpPlayer {
     // Sets spawns
     if (this.spawnPlatform === "bottom") {
       if (this.map === "1") {
-        calculateSpawn(base, this.spawn, this.opponent);
+        calculateSpawn(base, this.spawn, this.opponent, this.playersInTeam);
       } else if (this.map === "2") {
         calculateMangroveSpawn("bottom", this.spawn, this.opponent);
       }
     } else if (this.spawnPlatform === "top") {
       if (this.map === "1") {
-        calculateSpawn(platform, this.spawn, this.opponent);
+        calculateSpawn(platform, this.spawn, this.opponent, this.playersInTeam);
       } else if (this.map === "2") {
         calculateMangroveSpawn("top", this.spawn, this.opponent);
       }
@@ -162,14 +163,13 @@ export default class OpPlayer {
   applyFlipOffset() {
     if (!this.opponent || !this.opponent.body) return;
     const bs = this.bodyConfig || {};
-    const offsetXFromHalf = bs.offsetXFromHalf ?? 0;
-    const offsetY = bs.offsetY ?? 10;
-    const flipOffset = bs.flipOffset || 0; // falsy -> 0
+    const flipOffset = bs.flipOffset || 0;
     const extra = this.opponent.flipX ? flipOffset : 0;
-    this.opponent.body.setOffset(
-      this.opponent.body.width / 2 + offsetXFromHalf + extra,
-      offsetY
-    );
+    const frameW = this.opFrame ? this.opFrame.width : this.opponent.width;
+    const bodyW = this.opponent.body.width;
+    const ox = frameW / 2 - bodyW / 2 + (bs.offsetXFromHalf ?? 0) + extra;
+    const oy = bs.offsetY ?? 10;
+    this.opponent.body.setOffset(ox, oy);
   }
 
   // Public helper to sync UI positions immediately (used after teleports/initial position set)

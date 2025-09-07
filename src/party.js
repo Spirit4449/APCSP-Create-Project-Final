@@ -264,10 +264,10 @@ export function socketInit() {
       }
 
       console.log("Match ready! Redirecting to game...", matchId);
-      
+
       // Store match info for game page
       sessionStorage.setItem("matchId", matchId);
-      
+
       // Redirect to game page using new URL format
       window.location.href = `/game/${matchId}`;
     } catch (error) {

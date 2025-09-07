@@ -17,7 +17,7 @@ function createGameHub({ io, db }) {
 
   /**
    * Create a new game room when match goes live
-   * @param {number} matchId 
+   * @param {number} matchId
    * @param {object} matchData - { mode, map, players }
    */
   async function createGameRoom(matchId, matchData) {
@@ -26,17 +26,19 @@ function createGameHub({ io, db }) {
       return activeRooms.get(matchId);
     }
 
-    const { GameRoom } = require('./gameRoom');
+    const { GameRoom } = require("./gameRoom");
     const room = new GameRoom(matchId, matchData, { io, db });
     activeRooms.set(matchId, room);
-    
-    console.log(`[GameHub] Created game room ${matchId} for ${matchData.players.length} players`);
+
+    console.log(
+      `[GameHub] Created game room ${matchId} for ${matchData.players.length} players`
+    );
     return room;
   }
 
   /**
    * Get existing game room
-   * @param {number} matchId 
+   * @param {number} matchId
    */
   function getGameRoom(matchId) {
     return activeRooms.get(matchId);
@@ -44,7 +46,7 @@ function createGameHub({ io, db }) {
 
   /**
    * Remove a game room (called when game ends)
-   * @param {number} matchId 
+   * @param {number} matchId
    */
   function removeGameRoom(matchId) {
     const room = activeRooms.get(matchId);
@@ -57,19 +59,19 @@ function createGameHub({ io, db }) {
 
   /**
    * Handle player joining a game room
-   * @param {object} socket 
-   * @param {number} matchId 
+   * @param {object} socket
+   * @param {number} matchId
    */
   async function handlePlayerJoin(socket, matchId) {
     const room = activeRooms.get(matchId);
     if (!room) {
-      socket.emit('game:error', { message: 'Game room not found' });
+      socket.emit("game:error", { message: "Game room not found" });
       return false;
     }
 
     const user = socket.data.user;
     if (!user) {
-      socket.emit('game:error', { message: 'Authentication required' });
+      socket.emit("game:error", { message: "Authentication required" });
       return false;
     }
 
@@ -77,16 +79,19 @@ function createGameHub({ io, db }) {
       await room.addPlayer(socket, user);
       return true;
     } catch (error) {
-      console.error(`[GameHub] Error adding player ${user.name} to room ${matchId}:`, error);
-      socket.emit('game:error', { message: error.message });
+      console.error(
+        `[GameHub] Error adding player ${user.name} to room ${matchId}:`,
+        error
+      );
+      socket.emit("game:error", { message: error.message });
       return false;
     }
   }
 
   /**
    * Handle player leaving a game room
-   * @param {object} socket 
-   * @param {number} matchId 
+   * @param {object} socket
+   * @param {number} matchId
    */
   async function handlePlayerLeave(socket, matchId) {
     const room = activeRooms.get(matchId);
@@ -97,13 +102,16 @@ function createGameHub({ io, db }) {
 
     try {
       await room.removePlayer(socket, user);
-      
+
       // If room is empty, clean it up
       if (room.getPlayerCount() === 0) {
         removeGameRoom(matchId);
       }
     } catch (error) {
-      console.error(`[GameHub] Error removing player ${user.name} from room ${matchId}:`, error);
+      console.error(
+        `[GameHub] Error removing player ${user.name} from room ${matchId}:`,
+        error
+      );
     }
   }
 
@@ -117,7 +125,7 @@ function createGameHub({ io, db }) {
         matchId,
         playerCount: room.getPlayerCount(),
         status: room.getStatus(),
-        uptime: Date.now() - room.getStartTime()
+        uptime: Date.now() - room.getStartTime(),
       });
     }
     return { activeRooms: rooms.length, rooms };
@@ -129,7 +137,7 @@ function createGameHub({ io, db }) {
     removeGameRoom,
     handlePlayerJoin,
     handlePlayerLeave,
-    getStats
+    getStats,
   };
 }
 

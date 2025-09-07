@@ -12,8 +12,47 @@
       rel="stylesheet"
     />
   </head>
+  <style>
+    html,
+    body {
+      margin: 0;
+      overflow: hidden;
+      font-family: "Poppins", sans-serif;
+      background: transparent !important;
+      height: 100%;
+    }
+    /* Full-bleed background image behind Phaser */
+    .background {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      z-index: 0;
+    }
+    .background-image {
+      width: 100%;
+      height: 100%;
+      object-position: 50% 100%;
+      object-fit: cover;
+      display: block;
+    }
+    /* Ensure Phaser canvas is above and transparent */
+    canvas {
+      position: fixed;
+      left: 50%;
+      transform: translateX(-50%);
+      bottom: 0;
+      z-index: 1;
+      background: transparent !important;
+      display: block;
+    }
+  </style>
   <body>
-    <canvas id="gameCanvas" width="1280" height="720"></canvas>
+    <div class="background">
+      <img src="/assets/lushy/gameBg.jpg" class="background-image" alt="" />
+    </div>
     <div id="hud"></div>
 
     <script src="/bundles/game.bundle.js"></script>

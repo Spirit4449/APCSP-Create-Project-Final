@@ -108,6 +108,7 @@ export function createPlayer(
   // Create player sprite!! Use character's texture key
   const textureKey = getTextureKey(character);
   player = scene.physics.add.sprite(-100, -100, textureKey);
+  player.setCollideWorldBounds(true);
   player.anims.play(resolveAnimKey(scene, currentCharacter, "idle"), true); // Play idle animation
   // Hide until we've configured frame/body and spawn to avoid a mid-air first render
   player.setVisible(false);
@@ -115,7 +116,17 @@ export function createPlayer(
 
   // Apply character stats (health, ammo, sprite/body sizing)
   const stats = getStats(character);
-  maxHealth = stats.maxHealth ?? maxHealth;
+  // Prefer server-provided per-match stats when available
+  const sessionStats =
+    (typeof window !== "undefined" &&
+      window.__MATCH_SESSION__ &&
+      window.__MATCH_SESSION__.stats) ||
+    null;
+  if (sessionStats && typeof sessionStats.health === "number") {
+    maxHealth = sessionStats.health;
+  } else if (typeof stats.baseHealth === "number") {
+    maxHealth = stats.baseHealth;
+  }
   currentHealth = maxHealth;
   ammoCooldownMs = stats.ammoCooldownMs ?? ammoCooldownMs;
   ammoReloadMs = stats.ammoReloadMs ?? ammoReloadMs;
@@ -133,17 +144,20 @@ export function createPlayer(
   bodyConfig = bs; // persist for use in movement function
   const widthShrink = bs.widthShrink ?? 35;
   const heightShrink = bs.heightShrink ?? 10;
-  player.body.setSize(frame.width - widthShrink, frame.width - heightShrink);
+  const bw = Math.max(4, frame.width - widthShrink);
+  const bh = Math.max(4, frame.height - heightShrink);
+  player.body.setSize(bw, bh);
   // Helper to adjust body offset when flipping
   applyFlipOffsetLocal = () => {
     if (!player || !player.body) return;
     const cfg = bodyConfig || {};
     const flipOffset = cfg.flipOffset || 0; // falsy -> 0
     const extra = player.flipX ? flipOffset : 0;
-    player.body.setOffset(
-      player.body.width / 2 + (cfg.offsetXFromHalf ?? 0) + extra,
-      cfg.offsetY ?? 10
-    );
+    const frameW = frame ? frame.width : player.width;
+    const bodyW = player.body.width;
+    const ox = frameW / 2 - bodyW / 2 + (cfg.offsetXFromHalf ?? 0) + extra;
+    const oy = cfg.offsetY ?? 10;
+    player.body.setOffset(ox, oy);
   };
   applyFlipOffsetLocal();
 
@@ -373,14 +387,19 @@ function drawAmmoBar(forcedX, forcedY) {
   ammoBarBack.setDepth(1);
 }
 
-function calculateSpawn(platform, spawn, player) {
-  const availableSpace = platform.width / playersInTeam; // Space for each player
-  const leftMost = platform.getBounds().left; // Leftmost x cord of the platform
-  const spawnY = platform.getTopCenter().y - player.height / 2; // Gets y cordinate for the player by calculating the center and subtracting half the player height. Since the player y is at the center.
-
-  const spawnX = leftMost + (spawn * availableSpace) / 2 - player.width * 1.333; // Calculates spawnx by combining all the previous variables. 1.333 is multiplied to perfect the position of the spawn otherwise it is offset to the right.
-  player.x = spawnX;
-  player.y = spawnY;
+function calculateSpawn(platform, spawn, player, teamSizeOverride) {
+  const teamSize = Math.max(1, Number(teamSizeOverride || playersInTeam) || 1);
+  const slotIndex = Math.min(
+    teamSize - 1,
+    Math.max(0, (Number(spawn) || 1) - 1)
+  );
+  const bounds = platform.getBounds();
+  const left = bounds.left;
+  const width = bounds.width;
+  const slotCenterX = left + width * ((slotIndex + 0.5) / teamSize);
+  const bodyH = player.body ? player.body.height : player.height;
+  const spawnY = platform.getTopCenter().y - bodyH / 2;
+  player.setPosition(slotCenterX, spawnY);
 }
 function calculateMangroveSpawn(position, spawnParam, player) {
   let platform;
@@ -403,18 +422,48 @@ function calculateMangroveSpawn(position, spawnParam, player) {
     }
   }
 
-  const availableSpace = platform.width;
-  const leftMost = platform.getBounds().left; // Leftmost x cord of the platform
-  const spawnY = platform.getTopCenter().y - player.height / 2; // Gets y cordinate for the player by calculating the center and subtracting half the player height. Since the player y is at the center.
-
-  const spawnX = leftMost + availableSpace / 2 - player.width;
-  player.x = spawnX;
-  player.y = spawnY;
+  const centerX = platform.getCenter().x;
+  const bodyH = player.body ? player.body.height : player.height;
+  const spawnY = platform.getTopCenter().y - bodyH / 2;
+  player.setPosition(centerX, spawnY);
 }
 
 export function handlePlayerMovement(scene) {
-  const speed = 250;
-  const jumpSpeed = 400;
+  // Movement tuning knobs (edit to change the feel):
+  // - maxSpeed: top horizontal running speed. Higher = faster.
+  const maxSpeed = 260;
+  // - accel: how fast you speed up on ground. Higher = snappier starts.
+  const accel = 3500;
+  // - airAccel: acceleration in air. Higher = more air control; lower = floatier.
+  const airAccel = 3300;
+  // - dragGround: how quickly you slow when you release input on ground.
+  //   Higher = stop sooner; lower = glide longer.
+  const dragGround = 1300;
+  // - dragAir: subtle slowdown in air (prevents infinite drift).
+  const dragAir = 200;
+  // - jumpSpeed: base jump power (lower to make jumps less powerful).
+  let jumpSpeed = 450; // was stronger before; keep lower for smaller hops
+  // - jumpBoost: small bonus based on current horizontal speed (running jumps feel punchier).
+  const jumpBoost = 10;
+  // - coyoteTimeMs: grace window to jump just after leaving a ledge (more forgiving platforming).
+  const coyoteTimeMs = 90;
+  // - wallJumpCooldownMs: delay before another wall jump is allowed.
+  const wallJumpCooldownMs = 320;
+  // - wallSlideMaxFallSpeed: cap downward speed while touching a wall (slower slide).
+  const wallSlideMaxFallSpeed = 160;
+  // - wallKickLockMs: short window after a wall jump where opposite input is ignored
+  //   so the horizontal kick isn't immediately canceled by collisions or input.
+  const wallKickLockMs = 160;
+  // Ensure body uses our drag settings once
+  if (player.body) {
+    const onGround = player.body.touching.down;
+    player.setDragX(onGround ? dragGround : dragAir);
+    player.setMaxVelocity(maxSpeed, 1000);
+  }
+  // Track last grounded time for coyote jumping
+  player._lastGroundTime = player.body.touching.down
+    ? Date.now()
+    : player._lastGroundTime || 0;
 
   // Keys. Player can use either arrow keys or WASD
   const leftKey =
@@ -428,7 +477,17 @@ export function handlePlayerMovement(scene) {
     if (indicatorTriangle) {
       indicatorTriangle.clear(); // Removes indicator triangle if the player has moved
     }
-    player.setVelocityX(-speed); // Sets velocity to negative so that it moves left
+    // Apply acceleration left (respect wall-kick lock)
+    const lockActive = (player._wallKickLockUntil || 0) > Date.now();
+    const onGround = player.body.touching.down;
+    const a = onGround ? accel : airAccel;
+    if (lockActive && (player.body.velocity.x || 0) > 0) {
+      // Currently being kicked to the right; ignore opposite input briefly
+      player.setAccelerationX(0);
+    } else {
+      player.setAccelerationX(-a);
+    }
+    player.setDragX(onGround ? dragGround : dragAir);
     const wasFlip = player.flipX;
     player.flipX = true; // Mirrors the body of the player
     if (player.flipX !== wasFlip && applyFlipOffsetLocal)
@@ -456,7 +515,16 @@ export function handlePlayerMovement(scene) {
     player.flipX = false; // Undos the mirror of the player
     if (player.flipX !== wasFlip && applyFlipOffsetLocal)
       applyFlipOffsetLocal();
-    player.setVelocityX(speed); // Sets velocity torwards right
+    const onGroundRight = player.body.touching.down;
+    const aRight = onGroundRight ? accel : airAccel;
+    const lockActiveRight = (player._wallKickLockUntil || 0) > Date.now();
+    if (lockActiveRight && (player.body.velocity.x || 0) < 0) {
+      // Currently being kicked to the left; ignore opposite input briefly
+      player.setAccelerationX(0);
+    } else {
+      player.setAccelerationX(aRight);
+    }
+    player.setDragX(onGroundRight ? dragGround : dragAir);
     isMoving = true; // Sets moving variable
     if (player.body.touching.down && !isAttacking && !dead) {
       // If the player is not in the air or attacking or dead, it plays the running animation
@@ -476,11 +544,21 @@ export function handlePlayerMovement(scene) {
   }
 
   // Jumping
-  if (upKey && player.body.touching.down && !dead) {
+  const now = Date.now();
+  if (
+    upKey &&
+    (player.body.touching.down ||
+      now - (player._lastGroundTime || 0) <= coyoteTimeMs) &&
+    !dead
+  ) {
     // If player is touching ground and jumping
     if (indicatorTriangle) {
       indicatorTriangle.clear(); // Removes indicator triangle if the player has jumped
     }
+    // Slight jump boost when moving fast to feel snappier transitions
+    const vx = Math.abs(player.body.velocity.x || 0);
+    const boost = Phaser.Math.Clamp((vx / maxSpeed) * jumpBoost, 0, jumpBoost);
+    jumpSpeed = 360 + boost; // slightly higher base for a stronger jump
     jump(); // Calls jump
     scene.sound.play("sfx-jump", { volume: 0.6 });
   } else if (
@@ -497,6 +575,16 @@ export function handlePlayerMovement(scene) {
     !isAttacking
   ) {
     player.anims.play(resolveAnimKey(scene, currentCharacter, "sliding"), true); // Plays sliding animation
+  }
+
+  // Wall slide: when touching a wall and airborne, limit fall speed for a slower slide
+  if (
+    !player.body.touching.down &&
+    (player.body.touching.left || player.body.touching.right)
+  ) {
+    if (player.body.velocity.y > wallSlideMaxFallSpeed) {
+      player.setVelocityY(wallSlideMaxFallSpeed);
+    }
   }
 
   // Check if the jump animation has completed
@@ -531,6 +619,7 @@ export function handlePlayerMovement(scene) {
     scene.sound.play("sfx-land", { volume: 0.8 });
   }
   wasOnGround = onGround;
+  if (onGround) player._lastGroundTime = Date.now();
 
   // Ammo reload tick
   if (ammoCharges < ammoCapacity) {
@@ -578,7 +667,10 @@ export function handlePlayerMovement(scene) {
   }
 
   function stopMoving() {
-    player.setVelocityX(0); // Sets the player to not moving
+    // Stop applying acceleration and let drag slow the player naturally
+    player.setAccelerationX(0);
+    const onGround = player.body.touching.down;
+    player.setDragX(onGround ? dragGround : dragAir);
     isMoving = false;
   }
 
@@ -591,23 +683,36 @@ export function handlePlayerMovement(scene) {
   }
 
   function wallJump() {
+    // More powerful wall jump using physics impulses (no tween)
     canWallJump = false;
-    player.anims.play(resolveAnimKey(scene, currentCharacter, "sliding"), true);
-    pdbg();
-    player.setVelocityY(-jumpSpeed);
-    // Horizontal kick and sound handled above
+    const fromLeft = !!player.body.touching.left;
+    const horizKick = fromLeft ? 360 : -360; // slightly less horizontal push
+    const vertKick = Math.max(jumpSpeed + 30, 220); // slightly less vertical pop
 
-    const wallJumpTween = scene.tweens.add({
-      // This tween smooths the kickback from the walljump
-      targets: player,
-      x: player.x + (player.body.touching.left ? 50 : -50), // Moves the player -50 or 50 cords away depending on position
-      duration: 200,
-      ease: "Linear",
-      onComplete: function () {
-        canWallJump = true;
-      },
+    // Face away from the wall and fix body offset
+    const wasFlip = player.flipX;
+    player.flipX = !fromLeft;
+    if (player.flipX !== wasFlip && applyFlipOffsetLocal)
+      applyFlipOffsetLocal();
+
+    // Play a jump-like animation
+    player.anims.play(resolveAnimKey(scene, currentCharacter, "jumping"), true);
+    pdbg();
+
+    // Apply velocity impulses
+    // Nudge away from the wall first so we don't remain embedded and lose the kick
+    const sep = 3;
+    player.x += fromLeft ? sep : -sep;
+    player.setVelocityX(horizKick);
+    player.setVelocityY(-vertKick);
+    player.setDragX(dragAir);
+
+    // Small lockout to prevent immediate re-wall-jumping
+    scene.time.delayedCall(wallJumpCooldownMs, () => {
+      canWallJump = true;
     });
-    wallJumpTween.play(); // Plays the tween
+    // During a short lock window, ignore opposite input so the kick carries
+    player._wallKickLockUntil = Date.now() + wallKickLockMs;
   }
 
   function fall() {

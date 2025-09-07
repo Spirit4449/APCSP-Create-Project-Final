@@ -49,53 +49,111 @@ export function mangroveMeadow(scene) {
   mangroveMeadowObjects.push(baseLeft);
 
   // Base Right
-  baseRight = scene.physics.add.sprite(centerX + 422, 638, "mangrove-base-right");
+  baseRight = scene.physics.add.sprite(
+    centerX + 422,
+    638,
+    "mangrove-base-right"
+  );
   baseRight.body.allowGravity = false; // Doesn't allow gravity
   baseRight.setImmovable(true); // Makes sure it doesn't move
   baseRight.setScale(0.6); // Makes it smaller
   mangroveMeadowObjects.push(baseRight);
 
   // Platform
-  tinyPlatform1 = scene.physics.add.sprite(centerX - 280, 325, "mangrove-tiny-platform");
+  tinyPlatform1 = scene.physics.add.sprite(
+    centerX - 280,
+    325,
+    "mangrove-tiny-platform"
+  );
   tinyPlatform1.setScale(0.6);
   tinyPlatform1.body.allowGravity = false;
   tinyPlatform1.setImmovable(true);
   mangroveMeadowObjects.push(tinyPlatform1);
 
   // Platform 2
-  tinyPlatform2 = scene.physics.add.sprite(centerX + 280, 325, "mangrove-tiny-platform");
+  tinyPlatform2 = scene.physics.add.sprite(
+    centerX + 280,
+    325,
+    "mangrove-tiny-platform"
+  );
   tinyPlatform2.setScale(0.6);
   tinyPlatform2.body.allowGravity = false;
   tinyPlatform2.setImmovable(true);
   mangroveMeadowObjects.push(tinyPlatform2);
 
   // Platform 3
-  tinyPlatform3 = scene.physics.add.sprite(centerX - 430, 200, "mangrove-tiny-platform");
+  tinyPlatform3 = scene.physics.add.sprite(
+    centerX - 430,
+    200,
+    "mangrove-tiny-platform"
+  );
   tinyPlatform3.setScale(0.6);
   tinyPlatform3.body.allowGravity = false;
   tinyPlatform3.setImmovable(true);
   mangroveMeadowObjects.push(tinyPlatform3);
 
   // Platform 4
-  tinyPlatform4 = scene.physics.add.sprite(centerX + 430, 200, "mangrove-tiny-platform");
+  tinyPlatform4 = scene.physics.add.sprite(
+    centerX + 430,
+    200,
+    "mangrove-tiny-platform"
+  );
   tinyPlatform4.setScale(0.6);
   tinyPlatform4.body.allowGravity = false;
   tinyPlatform4.setImmovable(true);
   mangroveMeadowObjects.push(tinyPlatform4);
 
   // Platform 5
-  tinyPlatform5 = scene.physics.add.sprite(centerX - 130, 150, "mangrove-tiny-platform");
+  tinyPlatform5 = scene.physics.add.sprite(
+    centerX - 130,
+    150,
+    "mangrove-tiny-platform"
+  );
   tinyPlatform5.setScale(0.6);
   tinyPlatform5.body.allowGravity = false;
   tinyPlatform5.setImmovable(true);
   mangroveMeadowObjects.push(tinyPlatform5);
 
   // Platform 6
-  tinyPlatform6 = scene.physics.add.sprite(centerX + 130, 150, "mangrove-tiny-platform");
+  tinyPlatform6 = scene.physics.add.sprite(
+    centerX + 130,
+    150,
+    "mangrove-tiny-platform"
+  );
   tinyPlatform6.setScale(0.6);
   tinyPlatform6.body.allowGravity = false;
   tinyPlatform6.setImmovable(true);
   mangroveMeadowObjects.push(tinyPlatform6);
 }
 
-export { mangroveMeadowObjects, tinyPlatform1, tinyPlatform2, tinyPlatform3, tinyPlatform4, tinyPlatform5, tinyPlatform6 };
+// Determine a consistent spawn position for Mangrove Meadow
+// team: 'team1' uses bottom triples (4,5,6), 'team2' uses top triples (1,2,3)
+// index: 0-based index within team; cycles across three platforms left->right
+export function positionMangroveSpawn(scene, sprite, team, index) {
+  if (!sprite) return;
+  const top = [tinyPlatform1, tinyPlatform2, tinyPlatform3];
+  const bottom = [tinyPlatform4, tinyPlatform5, tinyPlatform6];
+  const group = team === "team2" ? top : bottom;
+  const i = Math.max(0, Number(index) || 0) % group.length;
+  const plat = group[i];
+  if (!plat) return;
+  const cx = plat.getCenter().x;
+  const bodyH = sprite.body ? sprite.body.height : sprite.height;
+  const topY = plat.body ? plat.body.top : plat.getTopCenter().y;
+  const cy = topY - bodyH / 2 - 1;
+  if (sprite.body && typeof sprite.body.reset === "function") {
+    sprite.body.reset(cx, cy);
+  } else {
+    sprite.setPosition(cx, cy);
+  }
+}
+
+export {
+  mangroveMeadowObjects,
+  tinyPlatform1,
+  tinyPlatform2,
+  tinyPlatform3,
+  tinyPlatform4,
+  tinyPlatform5,
+  tinyPlatform6,
+};

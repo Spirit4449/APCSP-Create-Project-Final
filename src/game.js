@@ -1,9 +1,16 @@
 // game.js
 
 import Phaser from "phaser";
-import { getCookie } from "./lib/cookies";
-import { lushyPeaks, lushyPeaksObjects } from "./maps/lushyPeaks";
-import { mangroveMeadow, mangroveMeadowObjects } from "./maps/mangroveMeadow";
+import {
+  lushyPeaks,
+  lushyPeaksObjects,
+  positionLushySpawn,
+} from "./maps/lushyPeaks";
+import {
+  mangroveMeadow,
+  mangroveMeadowObjects,
+  positionMangroveSpawn,
+} from "./maps/mangroveMeadow";
 import { createPlayer, player, handlePlayerMovement, dead } from "./player";
 import {
   preloadAll,
@@ -18,45 +25,42 @@ import { spawnDust, prewarmDust } from "./effects";
 // Make Phaser globally available for character modules
 window.Phaser = Phaser;
 
-// Socket now imported from standalone module to prevent circular deps
-function cdbg() {
-  /* logging disabled for production */
-}
-cdbg();
-
 // Path to get assets
 const staticPath = "/assets";
 
 // Get match ID from URL path, fallback to query params or session storage
 function getMatchIdFromUrl() {
   // Try URL path first: /game/123
-  const pathParts = window.location.pathname.split('/');
-  if (pathParts.length >= 3 && pathParts[1] === 'game') {
+  const pathParts = window.location.pathname.split("/");
+  if (pathParts.length >= 3 && pathParts[1] === "game") {
     const pathMatchId = pathParts[2];
-    if (pathMatchId && pathMatchId !== '') {
+    if (pathMatchId && pathMatchId !== "") {
       return pathMatchId;
     }
   }
-  
+
   // Fallback to query params: /game.html?match=123
   const urlParams = new URLSearchParams(window.location.search);
-  const queryMatchId = urlParams.get('match');
+  const queryMatchId = urlParams.get("match");
   if (queryMatchId) return queryMatchId;
-  
+
   // Last resort: session storage
-  return sessionStorage.getItem('matchId');
+  return sessionStorage.getItem("matchId");
 }
 
 const matchId = getMatchIdFromUrl();
 
 if (!matchId) {
   console.error("No match ID found, redirecting to lobby");
-  window.location.href = '/';
+  window.location.href = "/";
 }
 
 // Variables to store game session data
-const username = getCookie("name");
+// Use server-sent identity (from /gamedata) rather than client cookies
+let username = null;
 let gameData = null; // Will be fetched from /gamedata endpoint
+// Expose current match session details (level, per-character damages) for character modules
+window.__MATCH_SESSION__ = window.__MATCH_SESSION__ || {};
 
 // Map variable
 let mapObjects;
@@ -76,7 +80,7 @@ let lastPlayerState = { x: 0, y: 0, flip: false, animation: null };
 let stateActive = false; // set true once we start receiving server snapshots
 const stateBuffer = []; // queue of { t, players: { [username]: {x,y,flip,animation} } }
 const MAX_STATE_BUFFER = 60; // ~4 seconds at 15 Hz
-let interpDelayMs = 100; // render ~80-120ms in the past (default 100ms)
+let interpDelayMs = 140; // render ~120-160ms in the past to reduce snapping
 
 // Game scene reference
 let gameScene = null;
@@ -84,12 +88,12 @@ let gameScene = null;
 // Fetch game data from server
 async function fetchGameData() {
   try {
-    const response = await fetch('/gamedata', {
-      method: 'POST',
+    const response = await fetch("/gamedata", {
+      method: "POST",
       headers: {
-        'Content-Type': 'application/json',
+        "Content-Type": "application/json",
       },
-      body: JSON.stringify({ matchId: Number(matchId) })
+      body: JSON.stringify({ matchId: Number(matchId) }),
     });
 
     if (!response.ok) {
@@ -98,14 +102,14 @@ async function fetchGameData() {
 
     const result = await response.json();
     if (!result.success) {
-      throw new Error(result.error || 'Failed to fetch game data');
+      throw new Error(result.error || "Failed to fetch game data");
     }
 
     return result.gameData;
   } catch (error) {
-    console.error('Failed to fetch game data:', error);
-    alert('Failed to load game data. Redirecting to lobby...');
-    window.location.href = '/';
+    console.error("Failed to fetch game data:", error);
+    alert("Failed to load game data. Redirecting to lobby...");
+    window.location.href = "/";
     throw error;
   }
 }
@@ -113,38 +117,50 @@ async function fetchGameData() {
 // Initialize game connection
 async function initializeGame() {
   try {
-    console.log('Fetching game data for match:', matchId);
+    console.log("Fetching game data for match:", matchId);
     gameData = await fetchGameData();
-    console.log('Game data received:', gameData);
+    username = gameData.yourName || username;
 
-    // Join the game room via socket
-    socket.emit('game:join', { matchId: Number(matchId) });
-    
-    // Set up game event listeners
+    // 1) Register listeners before join
     setupGameEventListeners();
-    
+
+    // 2) Include gameId if your /gamedata returns it
+    const joinPayload = { matchId: Number(matchId) };
+    if (gameData?.gameId) joinPayload.gameId = Number(gameData.gameId);
+
+    // 3) Now join
+    socket.emit("game:join", joinPayload);
   } catch (error) {
-    console.error('Failed to initialize game:', error);
+    console.error("Failed to initialize game:", error);
   }
 }
 
 // Set up socket event listeners for game
 function setupGameEventListeners() {
   // Game initialization
-  socket.on('game:init', (gameState) => {
-    console.log('Game initialized:', gameState);
+  socket.on("game:init", (gameState) => {
+    console.log("Game initialized:", gameState);
     gameInitialized = true;
-    
+
     // Update local game data with server state
     if (gameState.players) {
       // Initialize opponent and team players based on server data
       initializePlayers(gameState.players);
     }
+
+    // Cache my level and stats for character modules
+    try {
+      const me = (gameState.players || []).find((p) => p.name === username);
+      if (me) {
+        window.__MATCH_SESSION__.level = me.level || 1;
+        window.__MATCH_SESSION__.stats = me.stats || {};
+      }
+    } catch (_) {}
   });
 
   // Game start countdown
-  socket.on('game:start', (data) => {
-    console.log('Game starting:', data);
+  socket.on("game:start", (data) => {
+    console.log("Game starting:", data);
     if (data.countdown && gameScene) {
       // Show countdown in UI
       showCountdown(data.countdown);
@@ -152,18 +168,48 @@ function setupGameEventListeners() {
   });
 
   // Server snapshots for interpolation
-  socket.on('game:snapshot', (snapshot) => {
+  socket.on("game:snapshot", (snapshot) => {
     if (!stateActive) {
       stateActive = true;
-      console.log('Started receiving server snapshots');
+      console.log("Started receiving server snapshots");
     }
-    
+
+    // Late-join safety: create opponents on first snapshot if missing
+    try {
+      if (gameScene && snapshot && snapshot.players) {
+        for (const name of Object.keys(snapshot.players)) {
+          if (name === username) continue;
+          const exists = opponentPlayers[name] || teamPlayers[name];
+          if (!exists) {
+            const pd = (gameData.players || []).find((p) => p.name === name);
+            if (pd) {
+              const isTeammate = pd.team === gameData.yourTeam;
+              const container = isTeammate ? teamPlayers : opponentPlayers;
+              const op = new OpPlayer(
+                gameScene,
+                pd.char_class,
+                pd.name,
+                pd.team,
+                null,
+                null,
+                (gameData.players || []).filter(
+                  (p) => p.team === pd.team
+                ).length,
+                String(gameData.map)
+              );
+              container[pd.name] = op;
+            }
+          }
+        }
+      }
+    } catch (_) {}
+
     // Add to state buffer for interpolation
     stateBuffer.push({
       t: snapshot.timestamp,
-      players: snapshot.players
+      players: snapshot.players,
     });
-    
+
     // Keep buffer size manageable
     if (stateBuffer.length > MAX_STATE_BUFFER) {
       stateBuffer.shift();
@@ -171,20 +217,20 @@ function setupGameEventListeners() {
   });
 
   // Game actions from other players
-  socket.on('game:action', (actionData) => {
-    console.log('Player action:', actionData);
+  socket.on("game:action", (actionData) => {
+    console.log("Player action:", actionData);
     // Handle other players' actions (attacks, abilities, etc.)
   });
 
   // Game errors
-  socket.on('game:error', (error) => {
-    console.error('Game error:', error);
+  socket.on("game:error", (error) => {
+    console.error("Game error:", error);
     alert(`Game error: ${error.message}`);
   });
 
   // Player disconnections
-  socket.on('player:disconnected', (data) => {
-    console.log('Player disconnected:', data);
+  socket.on("player:disconnected", (data) => {
+    console.log("Player disconnected:", data);
     // Handle player disconnection in UI
   });
 }
@@ -198,7 +244,7 @@ function initializePlayers(players) {
     }
     delete opponentPlayers[name];
   }
-  
+
   for (const name in teamPlayers) {
     if (teamPlayers[name].sprite) {
       teamPlayers[name].sprite.destroy();
@@ -207,7 +253,7 @@ function initializePlayers(players) {
   }
 
   // Add players based on teams
-  players.forEach(playerData => {
+  players.forEach((playerData) => {
     if (playerData.name === username) {
       // This is the local player, handled separately
       return;
@@ -215,7 +261,7 @@ function initializePlayers(players) {
 
     const isTeammate = playerData.team === gameData.yourTeam;
     const playerContainer = isTeammate ? teamPlayers : opponentPlayers;
-    
+
     // Create OpPlayer instance (this will be created when the scene is ready)
     playerContainer[playerData.name] = {
       name: playerData.name,
@@ -224,7 +270,7 @@ function initializePlayers(players) {
       x: playerData.x || 100,
       y: playerData.y || 100,
       health: playerData.health || 100,
-      isAlive: playerData.isAlive !== false
+      isAlive: playerData.isAlive !== false,
     };
   });
 }
@@ -232,10 +278,10 @@ function initializePlayers(players) {
 // Show countdown UI
 function showCountdown(seconds) {
   // Create or update countdown display
-  let countdownEl = document.getElementById('countdown');
+  let countdownEl = document.getElementById("countdown");
   if (!countdownEl) {
-    countdownEl = document.createElement('div');
-    countdownEl.id = 'countdown';
+    countdownEl = document.createElement("div");
+    countdownEl.id = "countdown";
     countdownEl.style.cssText = `
       position: fixed;
       top: 50%;
@@ -250,9 +296,9 @@ function showCountdown(seconds) {
     `;
     document.body.appendChild(countdownEl);
   }
-  
+
   countdownEl.textContent = seconds;
-  
+
   // Remove countdown after it finishes
   if (seconds <= 0) {
     setTimeout(() => {
@@ -264,17 +310,16 @@ function showCountdown(seconds) {
 }
 
 // Initialize game when page loads
-document.addEventListener('DOMContentLoaded', initializeGame);
+document.addEventListener("DOMContentLoaded", initializeGame);
 
 // Phaser class to setup the game
 class GameScene extends Phaser.Scene {
   constructor() {
-    super({ key: 'GameScene' });
+    super({ key: "GameScene" });
   }
 
   // Preloads assets
   preload() {
-    cdbg();
     this.load.image("lushy-bg", `${staticPath}/lushy/gameBg.png`);
     this.load.image("mangrove-bg", `${staticPath}/mangrove/gameBg.png`);
     // Character assets (preload all registered characters)
@@ -326,17 +371,13 @@ class GameScene extends Phaser.Scene {
   }
 
   create() {
-    cdbg();
-    
     // Store scene reference
     gameScene = this;
-    
-    // Ensure camera renders on whole pixels for crisp sprites
-    this.cameras?.main && (this.cameras.main.roundPixels = true);
-    
+
+    this.physics.world.setBoundsCollision(false, false, false, false);
     // Wait for game data before creating map and player
     if (!gameData) {
-      console.log('Waiting for game data...');
+      console.log("Waiting for game data...");
       // Poll for game data
       const pollForGameData = () => {
         if (gameData) {
@@ -348,20 +389,19 @@ class GameScene extends Phaser.Scene {
       setTimeout(pollForGameData, 100);
       return;
     }
-    
+
     this.initializeGameWorld();
   }
-  
+
   initializeGameWorld() {
+    // No per-scene spawn plan needed now; map modules provide positioning helpers
     // Creates the map objects based on game data
     if (gameData.map === 1) {
       mapObjects = lushyPeaksObjects;
       lushyPeaks(this);
-      cdbg();
     } else if (gameData.map === 2) {
       mapObjects = mangroveMeadowObjects;
       mangroveMeadow(this);
-      cdbg();
     }
 
     // Ensure all character animations are registered for this scene
@@ -393,70 +433,169 @@ class GameScene extends Phaser.Scene {
     this.input.once("pointerdown", startBgm);
     this.input.keyboard?.once("keydown", startBgm);
 
+    // Cache my level and stats BEFORE creating the player so HUD uses server values
+    try {
+      const me = (gameData.players || []).find((p) => p.name === username);
+      if (me) {
+        window.__MATCH_SESSION__ = window.__MATCH_SESSION__ || {};
+        window.__MATCH_SESSION__.level = me.level || 1;
+        window.__MATCH_SESSION__.stats = me.stats || {};
+      }
+    } catch (_) {}
+
     // Creates player object using game data
     createPlayer(
       this,
       username,
       gameData.yourCharacter,
-      null, // spawnPlatform - will be determined by server
-      null, // spawn - will be determined by server  
-      gameData.players.length,
-      gameData.map,
+      null,
+      null,
+      (gameData.players || []).filter((p) => p.team === gameData.yourTeam)
+        .length,
+      String(gameData.map),
       opponentPlayers
     );
-    cdbg();
-    
+    // Safety: ensure we never keep an OpPlayer entry for myself
+    try {
+      if (username) {
+        if (opponentPlayers && opponentPlayers[username]) {
+          const op = opponentPlayers[username];
+          if (op && op.destroy) op.destroy();
+          delete opponentPlayers[username];
+        }
+        if (teamPlayers && teamPlayers[username]) {
+          const tp = teamPlayers[username];
+          if (tp && tp.destroy) tp.destroy();
+          delete teamPlayers[username];
+        }
+      }
+    } catch (_) {}
+    // After sprite exists and body sized, move to a map-appropriate spawn slot
+    try {
+      const teamList = (gameData.players || [])
+        .filter((p) => p.team === gameData.yourTeam)
+        .sort((a, b) => a.name.localeCompare(b.name));
+      const myIndex = Math.max(
+        0,
+        teamList.findIndex((p) => p.name === username)
+      );
+      if (String(gameData.map) === "1") {
+        positionLushySpawn(
+          this,
+          player,
+          gameData.yourTeam,
+          myIndex,
+          teamList.length
+        );
+      } else if (String(gameData.map) === "2") {
+        positionMangroveSpawn(this, player, gameData.yourTeam, myIndex);
+      }
+    } catch (_) {}
+
+    // Server stats are already applied above prior to createPlayer
+
     // Initialize other players from game data
     this.initializeOtherPlayers();
-    
-    // Toggle physics debug with Ctrl+M
+
+    // Toggle physics debug with Ctrl+M (ensures debug graphic exists)
     this.input.keyboard.on("keydown-M", (e) => {
       if (!e.ctrlKey) return;
       const world = this.physics?.world;
       if (!world) return;
-      // Flip debug draw state
-      world.drawDebug = !world.drawDebug;
-      // Clear previous graphics and show/hide accordingly
-      if (world.debugGraphic) {
-        world.debugGraphic.clear();
-        world.debugGraphic.setVisible(world.drawDebug);
+      const enable = !world.drawDebug;
+      world.drawDebug = enable;
+      if (enable) {
+        // Create debug graphic if Phaser hasn't created it yet
+        try {
+          if (!world.debugGraphic || !world.debugGraphic.scene) {
+            if (typeof world.createDebugGraphic === "function") {
+              world.createDebugGraphic();
+            } else {
+              world.debugGraphic = this.add.graphics();
+            }
+          }
+          world.debugGraphic.setVisible(true);
+        } catch (_) {}
+      } else {
+        try {
+          if (world.debugGraphic) {
+            world.debugGraphic.clear?.();
+            world.debugGraphic.setVisible(false);
+          }
+        } catch (_) {}
       }
-      // Also update the config reference if present (helps some plugins check)
-      if (this.sys?.game?.config?.physics?.arcade) {
-        this.sys.game.config.physics.arcade.debug = world.drawDebug;
-      }
+      // Keep config in sync for any systems that read it
+      const arcadeCfg = this.sys?.game?.config?.physics?.arcade;
+      if (arcadeCfg) arcadeCfg.debug = enable;
     });
-    
+
     // Adds collision between map and player
     mapObjects.forEach((mapObject) => {
       // Add collider between the object and each map object
       this.physics.add.collider(player, mapObject);
     });
-    cdbg();
   }
-  
+
   initializeOtherPlayers() {
     // Create OpPlayer instances for other players
-    gameData.players.forEach(playerData => {
+    gameData.players.forEach((playerData) => {
       if (playerData.name === username) {
         return; // Skip local player
       }
 
       const isTeammate = playerData.team === gameData.yourTeam;
       const playerContainer = isTeammate ? teamPlayers : opponentPlayers;
-      
+
+      // Determine spawn info from plan
       // Create OpPlayer instance with correct constructor parameters
       const opPlayer = new OpPlayer(
         this, // scene
         playerData.char_class, // character
         playerData.name, // username
         playerData.team, // team
-        0, // spawnPlatform (will be set by server)
-        { x: 100, y: 100 }, // spawn (will be updated by server snapshots)
-        1, // playersInTeam (placeholder)
-        gameData.map // map
+        null,
+        null,
+        (gameData.players || []).filter(
+          (p) => p.team === playerData.team
+        ).length,
+        String(gameData.map) // map as string for spawn helpers
       );
-      
+
+      // Snap opponent sprite to its map-specific spawn immediately
+      try {
+        const teamList = (gameData.players || [])
+          .filter((p) => p.team === playerData.team)
+          .sort((a, b) => a.name.localeCompare(b.name));
+        const index = Math.max(
+          0,
+          teamList.findIndex((p) => p.name === playerData.name)
+        );
+        if (String(gameData.map) === "1") {
+          positionLushySpawn(
+            this,
+            opPlayer.opponent,
+            playerData.team,
+            index,
+            teamList.length
+          );
+        } else if (String(gameData.map) === "2") {
+          positionMangroveSpawn(
+            this,
+            opPlayer.opponent,
+            playerData.team,
+            index
+          );
+        }
+        if (opPlayer.updateUIPosition) opPlayer.updateUIPosition();
+      } catch (_) {}
+
+      // Apply server-sent max health if provided
+      if (playerData.stats && typeof playerData.stats.health === "number") {
+        opPlayer.opMaxHealth = playerData.stats.health;
+        opPlayer.opCurrentHealth = playerData.stats.health;
+        if (opPlayer.updateHealthBar) opPlayer.updateHealthBar();
+      }
+
       playerContainer[playerData.name] = opPlayer;
     });
   }
@@ -464,21 +603,21 @@ class GameScene extends Phaser.Scene {
   update() {
     // Only process if game is initialized
     if (!gameInitialized) return;
-    
+
     // Handle player movement input and send to server
     if (player && !dead && !gameEnded) {
       handlePlayerMovement(this);
-      
-      // Send input to server (throttled)
+
+      // Send position + state to server (throttled)
       const now = Date.now();
       if (now - lastMovementSent >= movementThrottleMs) {
         const currentState = {
           x: player.x,
           y: player.y,
           flip: player.flipX,
-          animation: player.anims?.currentAnim?.key || null
+          animation: player.anims?.currentAnim?.key || null,
         };
-        
+
         // Only send if state has changed
         if (
           Math.abs(currentState.x - lastPlayerState.x) > 1 ||
@@ -486,13 +625,8 @@ class GameScene extends Phaser.Scene {
           currentState.flip !== lastPlayerState.flip ||
           currentState.animation !== lastPlayerState.animation
         ) {
-          socket.emit('game:input', {
-            x: currentState.x,
-            y: currentState.y,
-            flip: currentState.flip,
-            animation: currentState.animation
-          });
-          
+          socket.emit("game:input", currentState);
+
           lastPlayerState = { ...currentState };
           lastMovementSent = now;
         }
@@ -503,19 +637,22 @@ class GameScene extends Phaser.Scene {
     if (stateActive && stateBuffer.length > 1) {
       const now = Date.now();
       const renderTime = now - interpDelayMs;
-      
+
       // Find the two snapshots to interpolate between
       let aState = null;
       let bState = null;
-      
+
       for (let i = 0; i < stateBuffer.length - 1; i++) {
-        if (stateBuffer[i].t <= renderTime && renderTime <= stateBuffer[i + 1].t) {
+        if (
+          stateBuffer[i].t <= renderTime &&
+          renderTime <= stateBuffer[i + 1].t
+        ) {
           aState = stateBuffer[i];
           bState = stateBuffer[i + 1];
           break;
         }
       }
-      
+
       // If we have valid states, interpolate
       if (aState && bState) {
         const alpha = (renderTime - aState.t) / (bState.t - aState.t);
@@ -541,25 +678,43 @@ class GameScene extends Phaser.Scene {
   interpolatePlayerStates(aState, bState, alpha) {
     const applyInterp = (wrapper, name) => {
       if (!wrapper || !wrapper.opponent) return;
-      
+
       const spr = wrapper.opponent;
       const aPosData = aState.players[name];
       const bPosData = bState.players[name];
-      
+
       if (!aPosData && !bPosData) return;
-      
-      // Position interpolation
+
+      // Position interpolation target
+      let targetX = spr.x;
+      let targetY = spr.y;
       if (aPosData && bPosData) {
-        const ix = aPosData.x + alpha * (bPosData.x - aPosData.x);
-        const iy = aPosData.y + alpha * (bPosData.y - aPosData.y);
-        spr.x = ix;
-        spr.y = iy;
+        targetX = aPosData.x + alpha * (bPosData.x - aPosData.x);
+        targetY = aPosData.y + alpha * (bPosData.y - aPosData.y);
       } else if (bPosData) {
-        spr.x = bPosData.x;
-        spr.y = bPosData.y;
+        targetX = bPosData.x;
+        targetY = bPosData.y;
       } else if (aPosData) {
-        spr.x = aPosData.x;
-        spr.y = aPosData.y;
+        targetX = aPosData.x;
+        targetY = aPosData.y;
+      }
+
+      // Low-pass filter to reduce snap: move a fraction toward target each frame
+      const dx = targetX - spr.x;
+      const dy = targetY - spr.y;
+      const distSq = dx * dx + dy * dy;
+      const maxSnapDistSq = 450 * 450; // snap if teleported far
+      // Factor based on frame delta (keeps feel similar across FPS)
+      const dt = this.game?.loop?.delta || 16.7;
+      const base = 0.18; // smoothing strength
+      const smoothing = 1 - Math.pow(1 - base, dt / 16.7);
+      if (distSq > maxSnapDistSq) {
+        // Large teleport or spawn: snap to avoid long easing trails
+        spr.x = targetX;
+        spr.y = targetY;
+      } else {
+        spr.x += dx * smoothing;
+        spr.y += dy * smoothing;
       }
 
       // Orientation/animation: take from newer if present
@@ -567,7 +722,10 @@ class GameScene extends Phaser.Scene {
       if (animSrc) {
         const prevFlip = spr.flipX;
         spr.flipX = !!animSrc.flip;
-        if (spr.flipX !== prevFlip && typeof wrapper.applyFlipOffset === "function") {
+        if (
+          spr.flipX !== prevFlip &&
+          typeof wrapper.applyFlipOffset === "function"
+        ) {
           wrapper.applyFlipOffset();
         }
         if (animSrc.animation) {
@@ -595,7 +753,10 @@ class GameScene extends Phaser.Scene {
 }
 
 const config = {
-  type: Phaser.AUTO,
+  // Force WebGL and enable transparency so the canvas can show the HTML/CSS background behind it
+  type: Phaser.WEBGL,
+  transparent: true,
+  backgroundColor: "rgba(0,0,0,0)",
   // Pixel-art friendly settings
   pixelArt: true,
   roundPixels: true,
@@ -604,9 +765,10 @@ const config = {
   scale: {
     // Makes sure the game looks good on all screens
     mode: Phaser.Scale.FIT,
-    autoCenter: Phaser.Scale.CENTER_BOTH,
+    // We'll position the canvas via CSS, so disable Phaser auto centering
+    autoCenter: Phaser.Scale.NO_CENTER,
     width: 1300,
-    height: 600,
+    height: 650,
   },
   scene: GameScene,
   physics: {

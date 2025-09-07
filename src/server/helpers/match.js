@@ -8,7 +8,7 @@
  */
 async function getUserLiveMatch(db, userId) {
   if (!userId) return null;
-  
+
   try {
     const rows = await db.runQuery(
       "SELECT m.match_id FROM matches m JOIN match_participants mp ON m.match_id = mp.match_id WHERE mp.user_id = ? AND m.status = 'live' LIMIT 1",
@@ -22,5 +22,5 @@ async function getUserLiveMatch(db, userId) {
 }
 
 module.exports = {
-  getUserLiveMatch
+  getUserLiveMatch,
 };
