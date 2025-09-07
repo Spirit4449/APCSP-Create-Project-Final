@@ -73,14 +73,16 @@ let gameInitialized = false; // track if game has been initialized
 
 // Movement throttling variables
 let lastMovementSent = 0;
-const movementThrottleMs = 25; // Send movement updates every 25ms
+const movementThrottleMs = 16; // ~60Hz movement updates for snappier remote view
 let lastPlayerState = { x: 0, y: 0, flip: false, animation: null };
 
 // Server snapshot interpolation
 let stateActive = false; // set true once we start receiving server snapshots
 const stateBuffer = []; // queue of { t, players: { [username]: {x,y,flip,animation} } }
 const MAX_STATE_BUFFER = 60; // ~4 seconds at 15 Hz
-let interpDelayMs = 140; // render ~120-160ms in the past to reduce snapping
+let interpDelayMs = 90; // lower delay for more responsiveness; increase if jittery
+let clockOffsetMs = 0; // serverTime - clientTime estimate; helps when device clock is off
+let clockCalibrated = false;
 
 // Game scene reference
 let gameScene = null;
@@ -174,31 +176,43 @@ function setupGameEventListeners() {
       console.log("Started receiving server snapshots");
     }
 
+    // Estimate server-client clock offset on first snapshot
+    try {
+      if (
+        !clockCalibrated &&
+        snapshot &&
+        typeof snapshot.timestamp === "number"
+      ) {
+        // serverTime - clientNow
+        clockOffsetMs = snapshot.timestamp - Date.now();
+        clockCalibrated = true;
+        console.log("Clock offset calibrated (ms):", clockOffsetMs);
+      }
+    } catch (_) {}
+
     // Late-join safety: create opponents on first snapshot if missing
     try {
       if (gameScene && snapshot && snapshot.players) {
         for (const name of Object.keys(snapshot.players)) {
           if (name === username) continue;
-          const exists = opponentPlayers[name] || teamPlayers[name];
-          if (!exists) {
-            const pd = (gameData.players || []).find((p) => p.name === name);
-            if (pd) {
-              const isTeammate = pd.team === gameData.yourTeam;
-              const container = isTeammate ? teamPlayers : opponentPlayers;
-              const op = new OpPlayer(
-                gameScene,
-                pd.char_class,
-                pd.name,
-                pd.team,
-                null,
-                null,
-                (gameData.players || []).filter(
-                  (p) => p.team === pd.team
-                ).length,
-                String(gameData.map)
-              );
-              container[pd.name] = op;
-            }
+          const pd = (gameData.players || []).find((p) => p.name === name);
+          const isTeammate = pd && pd.team === gameData.yourTeam;
+          const existing =
+            (isTeammate ? teamPlayers[name] : opponentPlayers[name]) || null;
+          const isValidInstance = !!(existing && existing.opponent);
+          if (!isValidInstance && pd) {
+            const container = isTeammate ? teamPlayers : opponentPlayers;
+            const op = new OpPlayer(
+              gameScene,
+              pd.char_class,
+              pd.name,
+              pd.team,
+              null,
+              null,
+              (gameData.players || []).filter((p) => p.team === pd.team).length,
+              String(gameData.map)
+            );
+            container[pd.name] = op;
           }
         }
       }
@@ -625,7 +639,8 @@ class GameScene extends Phaser.Scene {
           currentState.flip !== lastPlayerState.flip ||
           currentState.animation !== lastPlayerState.animation
         ) {
-          socket.emit("game:input", currentState);
+          // Disable per-message compression for movement for lower latency on constrained devices
+          socket.compress(false).emit("game:input", currentState);
 
           lastPlayerState = { ...currentState };
           lastMovementSent = now;
@@ -634,9 +649,11 @@ class GameScene extends Phaser.Scene {
     }
 
     // Server state interpolation
-    if (stateActive && stateBuffer.length > 1) {
+    if (stateActive && stateBuffer.length > 0) {
       const now = Date.now();
-      const renderTime = now - interpDelayMs;
+      // Use server-time basis if we calibrated; otherwise client-time
+      const renderTime =
+        now + (clockCalibrated ? clockOffsetMs : 0) - interpDelayMs;
 
       // Find the two snapshots to interpolate between
       let aState = null;
@@ -657,6 +674,17 @@ class GameScene extends Phaser.Scene {
       if (aState && bState) {
         const alpha = (renderTime - aState.t) / (bState.t - aState.t);
         this.interpolatePlayerStates(aState, bState, alpha);
+      } else {
+        // Fallbacks for clock skew or low buffer: snap to most recent
+        if (stateBuffer.length >= 2) {
+          const a = stateBuffer[stateBuffer.length - 2];
+          const b = stateBuffer[stateBuffer.length - 1];
+          this.interpolatePlayerStates(a, b, 1);
+        } else if (stateBuffer.length === 1) {
+          const only = stateBuffer[0];
+          // Interpolate with self (alpha=1) effectively snaps to the single state
+          this.interpolatePlayerStates(only, only, 1);
+        }
       }
     }
 

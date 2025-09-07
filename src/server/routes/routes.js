@@ -85,19 +85,30 @@ function registerRoutes({ app, io, db, auth, pageRoot, distDir }) {
       const [user, userType] = await getOrCreateCurrentUser(req, res, {
         autoCreate: true,
       });
+      // Normalize JSON fields for cross-environment consistency (e.g., MariaDB vs MySQL JSON)
+      const userNormalized = user ? { ...user } : null;
+      if (userNormalized && typeof userNormalized.char_levels === "string") {
+        try {
+          userNormalized.char_levels = JSON.parse(
+            userNormalized.char_levels || "{}"
+          );
+        } catch (_) {
+          userNormalized.char_levels = {};
+        }
+      }
       const partyRows = await db.runQuery(
         "SELECT party_id FROM party_members WHERE name = ? LIMIT 1",
-        [user.name]
+        [userNormalized?.name]
       );
 
       // Check for live match
-      const liveMatchId = await getUserLiveMatch(db, user?.user_id);
+      const liveMatchId = await getUserLiveMatch(db, userNormalized?.user_id);
 
       res.json({
         success: true,
-        userData: user,
+        userData: userNormalized,
         newlyCreated: userType === "new",
-        guest: isGuest(user),
+        guest: isGuest(userNormalized),
         party_id: partyRows[0]?.party_id ?? null,
         live_match_id: liveMatchId,
       });

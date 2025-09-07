@@ -24,7 +24,7 @@ class GameRoom {
     // Game loop
     this.gameLoop = null;
     this.tickRate = 60; // 60 FPS server tick rate
-    this.broadcastRate = 15; // 15 Hz snapshot broadcast rate
+    this.broadcastRate = 20; // 20 Hz snapshot broadcast rate for lower latency
     this.lastBroadcast = 0;
 
     console.log(
@@ -397,7 +397,11 @@ class GameRoom {
       };
     }
 
-    this.io.to(`game:${this.matchId}`).emit("game:snapshot", snapshot);
+    // Disable compression for frequent movement messages to reduce latency
+    this.io
+      .to(`game:${this.matchId}`)
+      .compress(false)
+      .emit("game:snapshot", snapshot);
   }
 
   /**

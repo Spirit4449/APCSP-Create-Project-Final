@@ -94,7 +94,7 @@ export default class OpPlayer {
       }
     }
 
-    // Reveal only after position is finalized
+    // Reveal only after position is finalized (spawn set and UI anchored)
     this.opponent.setVisible(true);
 
     // Sets the text of the name to username

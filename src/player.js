@@ -201,7 +201,7 @@ export function createPlayer(
     }
   }
 
-  // Now that position is finalized, reveal the sprite for the first grounded render
+  // Now that position is finalized (spawn set using body-aware math), reveal the sprite
   player.setVisible(true);
 
   // Frame/body already configured above prior to spawn for correct initial grounding
