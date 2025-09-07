@@ -120,7 +120,7 @@ class Ninja {
     // Build and broadcast attack payload
     const payload =
       typeof payloadBuilder === "function" ? payloadBuilder() : null;
-    if (payload) socket.emit("attack", payload);
+    if (payload) socket.emit("game:action", payload);
 
     // Update UI
     drawAmmoBar();
@@ -192,6 +192,7 @@ class Ninja {
       };
 
       return {
+        type: "ninja-shuriken",
         x: p.x,
         y: p.y,
         scale: config.scale || 0.1,

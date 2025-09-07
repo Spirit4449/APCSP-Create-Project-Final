@@ -210,7 +210,7 @@ class Thorg {
 
     const payload =
       typeof payloadBuilder === "function" ? payloadBuilder() : null;
-    if (payload) socket.emit("attack", payload);
+    if (payload) socket.emit("game:action", payload);
     drawAmmoBar();
     if (typeof onAfterFire === "function") onAfterFire();
     return true;

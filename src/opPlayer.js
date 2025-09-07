@@ -1,7 +1,6 @@
 // opplayer.js
 
 import { base, platform } from "./maps/lushyPeaks";
-import { calculateSpawn, calculateMangroveSpawn } from "./player";
 import {
   getTextureKey,
   resolveAnimKey,
@@ -79,20 +78,7 @@ export default class OpPlayer {
       this.scene.events.on("update", this._onSceneUpdate, this);
     }
 
-    // Sets spawns
-    if (this.spawnPlatform === "bottom") {
-      if (this.map === "1") {
-        calculateSpawn(base, this.spawn, this.opponent, this.playersInTeam);
-      } else if (this.map === "2") {
-        calculateMangroveSpawn("bottom", this.spawn, this.opponent);
-      }
-    } else if (this.spawnPlatform === "top") {
-      if (this.map === "1") {
-        calculateSpawn(platform, this.spawn, this.opponent, this.playersInTeam);
-      } else if (this.map === "2") {
-        calculateMangroveSpawn("top", this.spawn, this.opponent);
-      }
-    }
+
 
     // Reveal only after position is finalized (spawn set and UI anchored)
     this.opponent.setVisible(true);

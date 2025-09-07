@@ -179,27 +179,6 @@ export function createPlayer(
     }
   });
 
-  // Map
-  if (map === "1") {
-    mapObjects = lushyPeaksObjects;
-  } else if (map === "2") {
-    mapObjects = mangroveMeadowObjects;
-  }
-
-  // Sets spawn based on session storage data
-  if (spawnPlatform === "bottom") {
-    if (map === "1") {
-      calculateSpawn(base, spawn, player);
-    } else if (map === "2") {
-      calculateMangroveSpawn("bottom", spawn, player);
-    }
-  } else if (spawnPlatform === "top") {
-    if (map === "1") {
-      calculateSpawn(platform, spawn, player);
-    } else if (map === "2") {
-      calculateMangroveSpawn("top", spawn, player);
-    }
-  }
 
   // Now that position is finalized (spawn set using body-aware math), reveal the sprite
   player.setVisible(true);
@@ -387,46 +366,6 @@ function drawAmmoBar(forcedX, forcedY) {
   ammoBarBack.setDepth(1);
 }
 
-function calculateSpawn(platform, spawn, player, teamSizeOverride) {
-  const teamSize = Math.max(1, Number(teamSizeOverride || playersInTeam) || 1);
-  const slotIndex = Math.min(
-    teamSize - 1,
-    Math.max(0, (Number(spawn) || 1) - 1)
-  );
-  const bounds = platform.getBounds();
-  const left = bounds.left;
-  const width = bounds.width;
-  const slotCenterX = left + width * ((slotIndex + 0.5) / teamSize);
-  const bodyH = player.body ? player.body.height : player.height;
-  const spawnY = platform.getTopCenter().y - bodyH / 2;
-  player.setPosition(slotCenterX, spawnY);
-}
-function calculateMangroveSpawn(position, spawnParam, player) {
-  let platform;
-  let spawn = String(spawnParam);
-  if (position === "top") {
-    if (spawn === "1") {
-      platform = tinyPlatform1;
-    } else if (spawn === "2") {
-      platform = tinyPlatform2;
-    } else if (spawn === "3") {
-      platform = tinyPlatform3;
-    }
-  } else if (position === "bottom") {
-    if (spawn === "1") {
-      platform = tinyPlatform4;
-    } else if (spawn === "2") {
-      platform = tinyPlatform5;
-    } else if (spawn === "3") {
-      platform = tinyPlatform6;
-    }
-  }
-
-  const centerX = platform.getCenter().x;
-  const bodyH = player.body ? player.body.height : player.height;
-  const spawnY = platform.getTopCenter().y - bodyH / 2;
-  player.setPosition(centerX, spawnY);
-}
 
 export function handlePlayerMovement(scene) {
   // Movement tuning knobs (edit to change the feel):
@@ -733,8 +672,6 @@ export {
   currentHealth,
   setCurrentHealth,
   dead,
-  calculateSpawn,
-  calculateMangroveSpawn,
 };
 
 // Listen for authoritative health updates from server

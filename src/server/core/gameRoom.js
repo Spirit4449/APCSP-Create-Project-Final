@@ -329,7 +329,13 @@ class GameRoom {
     this.io.to(`game:${this.matchId}`).emit("game:action", {
       playerId: playerData.user_id,
       playerName: playerData.name,
+      // Include authoritative origin and facing for accurate remote visuals
+      origin: { x: playerData.x, y: playerData.y },
+      flip: !!playerData.flip,
+      character: playerData.char_class,
       action: actionData,
+      // Optional timestamp for ordering on client
+      t: Date.now(),
     });
   }
 

@@ -231,9 +231,58 @@ function setupGameEventListeners() {
   });
 
   // Game actions from other players
-  socket.on("game:action", (actionData) => {
-    console.log("Player action:", actionData);
-    // Handle other players' actions (attacks, abilities, etc.)
+  socket.on("game:action", (packet) => {
+    try {
+      if (!packet) return;
+      const { playerName, character, origin, flip, action } = packet;
+      if (!playerName || !action) return;
+      if (playerName === username) return; // ignore self
+
+      // Determine which container holds this player
+      const pd = (gameData.players || []).find((p) => p.name === playerName);
+      const isTeammate = pd && pd.team === gameData.yourTeam;
+      const container = isTeammate ? teamPlayers : opponentPlayers;
+      let wrapper = container[playerName];
+
+      // Lazy-create if missing (late join/desync safety)
+      if (!wrapper || !wrapper.opponent) {
+        if (!pd) return; // can't create without char/team info
+        const op = new OpPlayer(
+          gameScene,
+          pd.char_class,
+          pd.name,
+          pd.team,
+          null,
+          null,
+          (gameData.players || []).filter((p) => p.team === pd.team).length,
+          String(gameData.map)
+        );
+        container[pd.name] = op;
+        wrapper = op;
+      }
+
+  // Do NOT snap the opponent sprite to packet.origin; keep interpolation smooth.
+  // We'll only use origin for spawning projectiles/effects coordinates below.
+
+      // Resolve character (packet.character overrides roster info if present)
+      const charKey = (character || (pd && pd.char_class) || "").toLowerCase();
+      // Build action payload: use live sprite position/flip for fluid visuals
+      const act = { ...(action || {}) };
+      if (wrapper && wrapper.opponent) {
+        act.x = wrapper.opponent.x;
+        act.y = wrapper.opponent.y;
+        if (typeof act.direction !== "number") {
+          act.direction = wrapper.opponent.flipX ? -1 : 1;
+        }
+      }
+      const consumed = handleRemoteAttack(gameScene, charKey, act, wrapper);
+      if (!consumed) {
+        // Optional dev log for unhandled action types
+        console.debug("Unhandled remote action", { playerName, charKey, action });
+      }
+    } catch (err) {
+      console.warn("Failed to handle remote game:action", err);
+    }
   });
 
   // Game errors
@@ -334,8 +383,6 @@ class GameScene extends Phaser.Scene {
 
   // Preloads assets
   preload() {
-    this.load.image("lushy-bg", `${staticPath}/lushy/gameBg.png`);
-    this.load.image("mangrove-bg", `${staticPath}/mangrove/gameBg.png`);
     // Character assets (preload all registered characters)
     preloadAll(this, staticPath);
 
