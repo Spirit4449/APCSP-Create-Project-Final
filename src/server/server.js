@@ -36,6 +36,9 @@ const port = Number(process.env.PORT) || 3002;
 
 // Config
 const IS_PROD = process.env.NODE_ENV === "production";
+// Allow overriding cookie security for HTTP deployments (e.g., Raspberry Pi dev)
+// Set SECURE_COOKIES=true to force Secure; default is false unless explicitly enabled
+const SECURE_COOKIES = String(process.env.SECURE_COOKIES || "").toLowerCase() === "true";
 const PUBLIC_DIR = path.join(ROOT_DIR, "public");
 const DIST_DIR = path.join(ROOT_DIR, "dist");
 const PAGE_ROOT = IS_PROD ? DIST_DIR : PUBLIC_DIR;
@@ -62,10 +65,10 @@ const COOKIE_SECRET = resolveCookieSecretLocal();
 const SIGNED_COOKIE_OPTS = {
   httpOnly: true,
   sameSite: "lax",
-  secure: IS_PROD,
+  secure: SECURE_COOKIES,
   signed: true,
 };
-const DISPLAY_COOKIE_OPTS = { sameSite: "lax", secure: IS_PROD };
+const DISPLAY_COOKIE_OPTS = { sameSite: "lax", secure: SECURE_COOKIES };
 
 // Expose cookie opts for downstream modules
 app.locals.SIGNED_COOKIE_OPTS = SIGNED_COOKIE_OPTS;
@@ -74,6 +77,8 @@ app.locals.DISPLAY_COOKIE_OPTS = DISPLAY_COOKIE_OPTS;
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser(COOKIE_SECRET));
+// If running behind a reverse proxy, trust it so req.secure works when HTTPS is terminated at proxy
+app.set("trust proxy", 1);
 
 // Static and dev middleware
 if (!IS_PROD) {
@@ -123,9 +128,11 @@ registerRoutes({ app, io, db, auth, pageRoot: PAGE_ROOT, distDir: DIST_DIR });
   try {
     await db.pool.query("SELECT 1");
     console.log("✅ Database connected");
-    server.listen(port, () =>
-      console.log(`Server listening at http://localhost:${port}`)
-    );
+    server.listen(port, "0.0.0.0", () => {
+      console.log(
+        `Server listening on 0.0.0.0:${port} (cookies secure=${SECURE_COOKIES}, env=${process.env.NODE_ENV || "undefined"})`
+      );
+    });
   } catch (e) {
     console.error("❌ Failed to connect to DB:", e);
     process.exit(1);
