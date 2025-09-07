@@ -42,8 +42,9 @@ export const characterStats = {
     body: {
       widthShrink: 30,
       heightShrink: 8,
-      offsetXFromHalf: -43,
+      offsetXFromHalf: -18,
       offsetY: 8,
+      flipOffset: 14,
     },
     description: "A sturdy frontline bruiser with crushing blows.",
     free: true,
@@ -65,7 +66,7 @@ export const characterStats = {
       widthShrink: 220,
       heightShrink: 195,
       offsetXFromHalf: 0,
-      offsetY: 113,
+      offsetY: 111,
       // Shift body to the right when facing left to cover staff
       flipOffset: 5,
     },

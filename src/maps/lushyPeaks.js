@@ -72,7 +72,7 @@ export function positionLushySpawn(scene, sprite, team, index, teamSize) {
   const bodyH = sprite.body ? sprite.body.height : sprite.height;
   // Prefer physics body for precise top if available
   const topY = target.body ? target.body.top : target.getTopCenter().y;
-  const cy = topY - bodyH / 2 - 1; // epsilon above to avoid initial overlap
+  const cy = topY - bodyH / 2 - 5; // epsilon above to avoid initial overlap
   if (sprite.body && typeof sprite.body.reset === "function") {
     sprite.body.reset(cx, cy);
   } else {

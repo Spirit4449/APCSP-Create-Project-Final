@@ -21,11 +21,11 @@ export function mangroveMeadow(scene) {
   const centerX = scene.cameras.main.width / 2;
 
   // Setup background position
-  const background = scene.add.sprite(0, -180, "mangrove-bg");
-  // Set background to the size of the canvas
-  background.displayWidth = scene.sys.canvas.width;
-  background.displayHeight = scene.sys.canvas.height + 500; // add 500 to prevent distortion
-  background.setOrigin(0, 0);
+  // const background = scene.add.sprite(0, -180, "mangrove-bg");
+  // // Set background to the size of the canvas
+  // background.displayWidth = scene.sys.canvas.width;
+  // background.displayHeight = scene.sys.canvas.height + 500; // add 500 to prevent distortion
+  // background.setOrigin(0, 0);
 
   // Base Middle
   baseMiddle = scene.physics.add.sprite(centerX, 600, "mangrove-base-middle");
@@ -140,7 +140,7 @@ export function positionMangroveSpawn(scene, sprite, team, index) {
   const cx = plat.getCenter().x;
   const bodyH = sprite.body ? sprite.body.height : sprite.height;
   const topY = plat.body ? plat.body.top : plat.getTopCenter().y;
-  const cy = topY - bodyH / 2 - 1;
+  const cy = topY - bodyH / 2 - 5;
   if (sprite.body && typeof sprite.body.reset === "function") {
     sprite.body.reset(cx, cy);
   } else {
