@@ -27,6 +27,13 @@ class GameRoom {
     this.broadcastRate = 20; // 20 Hz snapshot broadcast rate for lower latency
     this.lastBroadcast = 0;
 
+    // Health/regen tuning (simple, readable constants)
+    this.REGEN_DELAY_MS = 3500; // idle time before regen starts
+    this.REGEN_TICK_MS = 1500; // heal every 1.5 seconds in discrete ticks
+    this.REGEN_MISSING_RATIO = 0.12; // heal 12% of missing health each tick (regressive)
+    this.REGEN_MIN_ABS = 500; // absolute minimum heal per tick (fixed amount, not percent)
+    this.REGEN_BROADCAST_MIN_MS = 120; // avoid spamming health-update too fast
+
     console.log(
       `[GameRoom ${matchId}] Created for mode ${matchData.mode}, map ${matchData.map}`
     );
@@ -61,6 +68,16 @@ class GameRoom {
       const matchPlayer = this.matchData.players.find(
         (p) => p.user_id === user.user_id
       );
+      // Fetch player's character level for current class to compute health/damage
+      const level = await this._fetchLevelForUser(
+        user.user_id,
+        matchPlayer.char_class
+      );
+      const { maxHealth, baseDamage, specialDamage } = this._computeStats(
+        matchPlayer.char_class,
+        level
+      );
+
       const playerData = {
         socketId: socket.id,
         user_id: user.user_id,
@@ -71,12 +88,25 @@ class GameRoom {
         // Game state
         x: 400, // Will be set by spawn logic
         y: 400,
-        health: 100,
+        maxHealth,
+        health: maxHealth,
         isAlive: true,
         lastInput: Date.now(),
 
         // Input buffer for server authority
         inputBuffer: [],
+
+        // Combat stats (server-side authoritative)
+        level,
+        baseDamage,
+        specialDamage,
+
+        // Combat timestamps for regen and anti-spam
+        lastCombatAt: Date.now(), // updated when attacking or being hit
+        lastAttackAt: 0,
+        lastDamagedAt: 0,
+        _regenCarry: 0, // fractional regen accumulator
+        _lastHealthBroadcastAt: 0,
       };
 
       this.players.set(socket.id, playerData);
@@ -145,6 +175,16 @@ class GameRoom {
       this.handlePlayerAction(socket.id, actionData);
     });
 
+    // Owner-side hit proposal (server authoritative application)
+    socket.on("hit", (payload) => {
+      this.handleHit(socket.id, payload);
+    });
+
+    // Heal proposal (e.g., abilities/pickups) - server clamps and applies
+    socket.on("heal", (payload) => {
+      this.handleHeal(socket.id, payload);
+    });
+
     // Handle disconnection
     socket.on("disconnect", () => {
       // This will be handled by the main socket disconnect handler
@@ -174,6 +214,8 @@ class GameRoom {
         x: p.x,
         y: p.y,
         health: p.health,
+        stats: { health: p.maxHealth },
+        level: p.level,
         isAlive: p.isAlive,
       })),
       status: this.status,
@@ -258,6 +300,9 @@ class GameRoom {
       // Process game tick (physics, collisions, etc.)
       this.processTick();
 
+      // Passive health regeneration after inactivity (attacking or being attacked resets)
+      this.processRegen();
+
       // Broadcast state snapshots to clients
       if (now - this.lastBroadcast >= broadcastInterval) {
         this.broadcastSnapshot();
@@ -324,6 +369,9 @@ class GameRoom {
       `[GameRoom ${this.matchId}] Player ${playerData.name} action: ${actionData.type}`
     );
 
+    // Mark as combat to pause regen even if attack misses
+    playerData.lastCombatAt = Date.now();
+
     // Process action (implement specific action handling later)
     // For now, just broadcast to other players
     this.io.to(`game:${this.matchId}`).emit("game:action", {
@@ -355,6 +403,42 @@ class GameRoom {
 
         // Clear old inputs
         playerData.inputBuffer = [];
+      }
+    }
+  }
+
+  /**
+   * Apply passive health regeneration to players who are out of combat.
+   */
+  processRegen() {
+    const now = Date.now();
+    for (const p of this.players.values()) {
+      if (!p.isAlive) continue;
+      if (typeof p.maxHealth !== "number" || typeof p.health !== "number")
+        continue;
+
+      const idleFor = now - (p.lastCombatAt || 0);
+      if (idleFor < this.REGEN_DELAY_MS) continue; // still in post-combat cooldown
+      if (p.health >= p.maxHealth) continue; // already full
+
+      const nextAt = p._regenNextAt || 0;
+      if (now < nextAt) continue; // wait until next tick
+
+      const missing = Math.max(0, p.maxHealth - p.health);
+      // Base desired heal = max(fixed minimum, % of missing)
+      const baseDesired = Math.max(
+        this.REGEN_MIN_ABS,
+        Math.ceil(missing * this.REGEN_MISSING_RATIO)
+      );
+      // Round up to next 100 multiple (e.g., 1->100, 401->500)
+      let inc = Math.ceil(baseDesired / 100) * 100;
+      // Never exceed the actual missing health
+      inc = Math.min(inc, missing);
+      const old = p.health;
+      p.health = Math.min(p.maxHealth, p.health + inc);
+      p._regenNextAt = now + this.REGEN_TICK_MS;
+      if (p.health !== old) {
+        this._maybeBroadcastHealth(p, now);
       }
     }
   }
@@ -440,6 +524,216 @@ class GameRoom {
   }
   getStartTime() {
     return this.startTime;
+  }
+
+  /**
+   * Handle a client-proposed hit. Server validates and applies damage.
+   * @param {string} socketId
+   * @param {object} payload { attacker, target, attackType?, instanceId?, damage? }
+   */
+  handleHit(socketId, payload) {
+    try {
+      if (!payload || typeof payload !== "object") return;
+      const attackerName = String(payload.attacker || "").trim();
+      const targetName = String(payload.target || "").trim();
+      if (!attackerName || !targetName) return;
+
+      const attacker = Array.from(this.players.values()).find(
+        (p) => p.name === attackerName
+      );
+      const target = Array.from(this.players.values()).find(
+        (p) => p.name === targetName
+      );
+      if (!attacker || !target) return;
+      if (!attacker.isAlive || !target.isAlive) return;
+      // Allow self-hit (suicide on fall) but otherwise disable friendly fire
+      const isSelf = attacker.name === target.name;
+      if (
+        !isSelf &&
+        attacker.team &&
+        target.team &&
+        attacker.team === target.team
+      )
+        return;
+
+      // Determine damage from server-side stats
+      const attackType = String(payload.attackType || "basic").toLowerCase();
+      const base =
+        attackType === "special"
+          ? Number(attacker.specialDamage || 0)
+          : Number(attacker.baseDamage || 0);
+      let dmg = Number.isFinite(base) && base > 0 ? base : 0;
+
+      if (dmg <= 0) return;
+
+      // Generous plausibility check on distance (without per-ability ranges yet)
+      // Prevents blatant long-range spoofing while not being too strict.
+      const dx = (attacker.x || 0) - (target.x || 0);
+      const dy = (attacker.y || 0) - (target.y || 0);
+      const dist = Math.hypot(dx, dy);
+      const maxDist = attackType === "special" ? 1000 : 850; // px
+      if (!isSelf && dist > maxDist) return; // ignore impossible hits
+
+  // Basic per-attacker->target rate limit to avoid accidental double submissions
+  this._recentHits = this._recentHits || new Map(); // key: attacker|target -> timestamp
+  const key = attacker.name + "|" + target.name + "|" + attackType;
+  const now = Date.now();
+  const last = this._recentHits.get(key) || 0;
+  const DUP_WINDOW_MS = 80; // hits within 80ms considered duplicate
+  if (!isSelf && now - last < DUP_WINDOW_MS) return; // duplicate, ignore
+  this._recentHits.set(key, now);
+
+  // Apply damage
+      const old = target.health;
+      target.health = Math.max(0, target.health - Math.round(dmg));
+      attacker.lastAttackAt = now;
+      target.lastDamagedAt = now;
+      attacker.lastCombatAt = now;
+      target.lastCombatAt = now;
+
+      if (target.health !== old) {
+        if (target.health === 0) target.isAlive = false;
+        this._broadcastHealthUpdate(target);
+        if (!target.isAlive) {
+          console.log(
+            `%c[GameRoom ${this.matchId}] Player ${target.name} was killed by ${attacker.name}`,
+            "color: red; font-weight: bold;"
+          );
+          // Optional: emit death event
+          this.io.to(`game:${this.matchId}`).emit("player:dead", {
+            username: target.name,
+            gameId: this.matchId,
+          });
+        }
+      }
+    } catch (e) {
+      console.warn(`[GameRoom ${this.matchId}] handleHit error:`, e?.message);
+    }
+  }
+
+  /**
+   * Fetch the level for a user's current character class.
+   */
+  async _fetchLevelForUser(userId, charClass) {
+    try {
+      const rows = await this.db.runQuery(
+        "SELECT char_levels FROM users WHERE user_id = ? LIMIT 1",
+        [userId]
+      );
+      const json = rows[0]?.char_levels || null;
+      if (!json) return 1;
+      const obj = JSON.parse(json);
+      const lvl = Number(obj?.[charClass]) || 1;
+      return Math.max(1, lvl);
+    } catch (_) {
+      return 1;
+    }
+  }
+
+  /**
+   * Compute derived stats for a character at a level.
+   */
+  _computeStats(charClass, level) {
+    try {
+      const {
+        getHealth,
+        getDamage,
+        getSpecialDamage,
+      } = require("../../lib/characterStats.js");
+      const maxHealth = Math.max(1, Number(getHealth(charClass, level)) || 1);
+      const baseDamage = Math.max(0, Number(getDamage(charClass, level)) || 0);
+      const specialDamage = Math.max(
+        0,
+        Number(getSpecialDamage(charClass, level)) || 0
+      );
+      return { maxHealth, baseDamage, specialDamage };
+    } catch (e) {
+      console.warn(
+        `[GameRoom ${this.matchId}] computeStats failed:`,
+        e?.message
+      );
+      return { maxHealth: 100, baseDamage: 100, specialDamage: 200 };
+    }
+  }
+
+  /**
+   * Emit a health-update to all players in the room.
+   */
+  _broadcastHealthUpdate(playerData) {
+    this.io.to(`game:${this.matchId}`).emit("health-update", {
+      username: playerData.name,
+      health: Math.max(0, Math.round(playerData.health)),
+      maxHealth: Math.max(
+        1,
+        Math.round(playerData.maxHealth || playerData.health || 1)
+      ),
+      gameId: this.matchId,
+    });
+    playerData._lastHealthBroadcastAt = Date.now();
+  }
+
+  /**
+   * Conditionally broadcast health if min interval elapsed.
+   */
+  _maybeBroadcastHealth(playerData, nowTs) {
+    const last = Number(playerData._lastHealthBroadcastAt || 0);
+    if (
+      nowTs - last >= this.REGEN_BROADCAST_MIN_MS ||
+      playerData.health === playerData.maxHealth
+    ) {
+      this._broadcastHealthUpdate(playerData);
+    }
+  }
+
+  /**
+   * Handle heal proposal from client. Applies clamped heal to target.
+   */
+  handleHeal(socketId, payload) {
+    try {
+      if (!payload || typeof payload !== "object") return;
+      const sourceName = String(
+        payload.source || payload.attacker || ""
+      ).trim();
+      const targetName = String(payload.target || "").trim();
+      if (!targetName) return;
+
+      const source = sourceName
+        ? Array.from(this.players.values()).find((p) => p.name === sourceName)
+        : null;
+      const target = Array.from(this.players.values()).find(
+        (p) => p.name === targetName
+      );
+      if (!target || !target.isAlive) return;
+
+      // Basic anti-abuse: optionally require same team if source provided
+      if (source && source.team && target.team && source.team !== target.team)
+        return;
+
+      // Compute heal amount: use a conservative default (half of baseDamage) if no ability type specified
+      const ability = String(
+        payload.abilityType || payload.attackType || "heal"
+      ).toLowerCase();
+      let amount = 0;
+      if (source) {
+        // Tie to source offensive power to avoid huge spoofed heals
+        const ref = Math.max(0, Number(source.baseDamage || 0));
+        amount = Math.round(ref * 0.5);
+      } else {
+        amount = 200; // fallback small heal
+      }
+      if (amount <= 0) return;
+
+      const now = Date.now();
+      const old = target.health;
+      target.health = Math.min(target.maxHealth, target.health + amount);
+      if (target.health !== old) {
+        // Mark combat only if healing counts as combat pause (we will mark as combat to pause regen stacking)
+        target.lastCombatAt = now;
+        this._broadcastHealthUpdate(target);
+      }
+    } catch (e) {
+      console.warn(`[GameRoom ${this.matchId}] handleHeal error:`, e?.message);
+    }
   }
 }
 

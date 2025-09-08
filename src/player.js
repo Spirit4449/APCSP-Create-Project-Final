@@ -179,7 +179,6 @@ export function createPlayer(
     }
   });
 
-
   // Now that position is finalized (spawn set using body-aware math), reveal the sprite
   player.setVisible(true);
 
@@ -366,7 +365,6 @@ function drawAmmoBar(forcedX, forcedY) {
   ammoBarBack.setDepth(1);
 }
 
-
 export function handlePlayerMovement(scene) {
   // Movement tuning knobs (edit to change the feel):
   // - maxSpeed: top horizontal running speed. Higher = faster.
@@ -531,7 +529,8 @@ export function handlePlayerMovement(scene) {
     !player.anims.isPlaying &&
     !player.body.touching.down &&
     !player.body.touching.left &&
-    !player.body.touching.right
+    !player.body.touching.right &&
+    !isAttacking
   ) {
     fall(); // Plays falling animation if the player is not touching a wall or if any other animation is playing
   }
@@ -614,7 +613,12 @@ export function handlePlayerMovement(scene) {
   }
 
   function jump() {
-    player.anims.play(resolveAnimKey(scene, currentCharacter, "jumping"), true);
+    if (!isAttacking) {
+      player.anims.play(
+        resolveAnimKey(scene, currentCharacter, "jumping"),
+        true
+      );
+    }
     pdbg();
     player.setVelocityY(-jumpSpeed);
     isMoving = true;
@@ -635,7 +639,12 @@ export function handlePlayerMovement(scene) {
       applyFlipOffsetLocal();
 
     // Play a jump-like animation
-    player.anims.play(resolveAnimKey(scene, currentCharacter, "jumping"), true);
+    if (!isAttacking) {
+      player.anims.play(
+        resolveAnimKey(scene, currentCharacter, "jumping"),
+        true
+      );
+    }
     pdbg();
 
     // Apply velocity impulses
@@ -655,7 +664,12 @@ export function handlePlayerMovement(scene) {
   }
 
   function fall() {
-    player.anims.play(resolveAnimKey(scene, currentCharacter, "falling"), true);
+    if (!isAttacking) {
+      player.anims.play(
+        resolveAnimKey(scene, currentCharacter, "falling"),
+        true
+      );
+    }
     pdbg();
     isJumping = false;
   }
@@ -666,19 +680,16 @@ export function handlePlayerMovement(scene) {
   }
 }
 
-export {
-  player,
-  frame,
-  currentHealth,
-  setCurrentHealth,
-  dead,
-};
+export { player, frame, currentHealth, setCurrentHealth, dead };
 
 // Listen for authoritative health updates from server
 socket.on("health-update", (data) => {
-  if (data.gameId !== gameId) return;
   if (data.username === username) {
     const prev = currentHealth;
+    if (typeof data.maxHealth === "number" && data.maxHealth > 0) {
+      maxHealth = data.maxHealth;
+      if (currentHealth > maxHealth) currentHealth = maxHealth;
+    }
     currentHealth = data.health;
     pdbg();
     // SFX: play damage vs heal feedback
@@ -689,6 +700,9 @@ socket.on("health-update", (data) => {
         scene.sound.play("sfx-damage", { volume: 0.1 });
       } else if (delta > 0) {
         const s = scene.sound.add("sfx-heal", { volume: 0.1 });
+        try {
+          s.play();
+        } catch (_) {}
       }
     }
     if (currentHealth <= 0) {

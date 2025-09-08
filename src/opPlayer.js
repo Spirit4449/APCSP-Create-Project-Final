@@ -78,8 +78,6 @@ export default class OpPlayer {
       this.scene.events.on("update", this._onSceneUpdate, this);
     }
 
-
-
     // Reveal only after position is finalized (spawn set and UI anchored)
     this.opponent.setVisible(true);
 
@@ -117,6 +115,11 @@ export default class OpPlayer {
     socket.on("health-update", (data) => {
       // data: { username, health, gameId }
       if (data.username === this.username) {
+        if (typeof data.maxHealth === "number" && data.maxHealth > 0) {
+          this.opMaxHealth = data.maxHealth;
+          if (this.opCurrentHealth > this.opMaxHealth)
+            this.opCurrentHealth = this.opMaxHealth;
+        }
         this.opCurrentHealth = data.health;
         if (this.opCurrentHealth <= 0) {
           this.opCurrentHealth = 0;
@@ -213,11 +216,10 @@ export default class OpPlayer {
       3
     );
 
-    if (this.team === "user") {
-      this.opHealthBar.fillStyle(0x2e88ca); // blue color for user team
-    } else {
-      this.opHealthBar.fillStyle(0xbb5c39); // red color for op team
-    }
+    // Teammates should be green, opponents red
+    const isTeammate =
+      this.team === "teammate" || this.team === "ally" || this.team === true;
+    this.opHealthBar.fillStyle(isTeammate ? 0x99ab2c : 0xbb5c39);
     this.opHealthBar.fillRoundedRect(healthBarX, y, displayedWidth, 9, 3);
 
     this.opHealthText.setPosition(

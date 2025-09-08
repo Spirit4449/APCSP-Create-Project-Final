@@ -206,7 +206,7 @@ function setupGameEventListeners() {
               gameScene,
               pd.char_class,
               pd.name,
-              pd.team,
+              isTeammate ? "teammate" : pd.team,
               null,
               null,
               (gameData.players || []).filter((p) => p.team === pd.team).length,
@@ -251,7 +251,7 @@ function setupGameEventListeners() {
           gameScene,
           pd.char_class,
           pd.name,
-          pd.team,
+          isTeammate ? "teammate" : pd.team,
           null,
           null,
           (gameData.players || []).filter((p) => p.team === pd.team).length,
@@ -617,7 +617,7 @@ class GameScene extends Phaser.Scene {
         this, // scene
         playerData.char_class, // character
         playerData.name, // username
-        playerData.team, // team
+        isTeammate ? "teammate" : playerData.team, // team or teammate flag for ally coloring
         null,
         null,
         (gameData.players || []).filter(

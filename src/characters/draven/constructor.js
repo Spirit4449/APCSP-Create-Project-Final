@@ -3,6 +3,7 @@ import socket from "../../socket";
 import { characterStats } from "../../lib/characterStats.js";
 import { animations } from "./anim";
 import DravenEffects from "./effects";
+import { performDravenSplashAttack, spawnExplosion } from "./attack";
 
 // Single source of truth for this character's name/key
 const NAME = "draven";
@@ -22,6 +23,12 @@ class draven {
       `${staticPath}/${NAME}/spritesheet.png`,
       `${staticPath}/${NAME}/animations.json`
     );
+    // Explosion atlas (separate) for splash attack visual
+    scene.load.atlas(
+      `${NAME}-explosion`,
+      `${staticPath}/${NAME}/explosion.png`,
+      `${staticPath}/${NAME}/explosion.json`
+    );
     // Ensure nearest-neighbor sampling for crisp pixel art
     scene.load.on(Phaser.Loader.Events.COMPLETE, () => {
       const tex = scene.textures.get(NAME);
@@ -39,10 +46,40 @@ class draven {
 
   static setupAnimations(scene) {
     animations(scene);
+    // Create explosion animation once
+    if (!scene.anims.exists(`${NAME}-explosion`)) {
+      const tex = scene.textures.get(`${NAME}-explosion`);
+      if (tex) {
+        const frames = tex.getFrameNames().filter((f) => /explosion/i.test(f));
+        if (frames.length) {
+          scene.anims.create({
+            key: `${NAME}-explosion`,
+            frames: frames.map((f) => ({ key: `${NAME}-explosion`, frame: f })),
+            frameRate: 28,
+            repeat: 0,
+          });
+        }
+      }
+    }
   }
 
-  // Remote attack visualization for draven (slash effect only)
-  static handleRemoteAttack(scene, data, ownerWrapper) {}
+  // Remote attack visualization: replicate moving splash & delayed explosion
+  static handleRemoteAttack(scene, data, ownerWrapper) {
+    if (!data || data.type !== "draven-splash") return false;
+    const ownerSprite = ownerWrapper && ownerWrapper.opponent;
+    if (!ownerSprite) return true; // nothing to draw
+    const delay = data.delay || 500;
+    const tipOffset = data.tipOffset || 90;
+    // Removed opponent-side debug splash rectangle; only show final explosion now
+    scene.time.delayedCall(delay, () => {
+      if (!ownerSprite || !ownerSprite.active) return;
+      const dir = ownerSprite.flipX ? -1 : 1;
+      const ex = ownerSprite.x + (dir > 0 ? tipOffset : -tipOffset);
+      const ey = ownerSprite.y - ownerSprite.height * 0.15;
+      spawnExplosion(scene, ex, ey);
+    });
+    return true;
+  }
 
   // Per-character gameplay and presentation stats
   static getStats() {
@@ -87,141 +124,53 @@ class draven {
 
     const cooldown = getAmmoCooldownMs();
     this.scene.time.delayedCall(cooldown, () => setCanAttack(true));
-    setTimeout(() => setIsAttacking(false), 250);
+    // We'll clear isAttacking when the attack animation actually completes (see below)
+    // Provide a safety fallback in case the animation is interrupted.
+    let cleared = false;
+    const safeClear = () => {
+      if (cleared) return;
+      cleared = true;
+      setIsAttacking(false);
+    };
+    // Safety fallback: if nothing else clears it within 900ms, clear automatically
+    this.scene.time.delayedCall(900, safeClear);
 
     const payload =
       typeof payloadBuilder === "function" ? payloadBuilder() : null;
     if (payload) socket.emit("game:action", payload);
     drawAmmoBar();
     if (typeof onAfterFire === "function") onAfterFire();
+
+    // Attempt to detect and listen for the throw animation to finish before clearing isAttacking
+    try {
+      const p = this.player;
+      const currentAnim =
+        p.anims && p.anims.currentAnim ? p.anims.currentAnim : null;
+      if (currentAnim && /throw|attack/i.test(currentAnim.key)) {
+        const key = currentAnim.key;
+        // Estimate duration if we have frame data
+        const frameRate = currentAnim.frameRate || 15;
+        const frameCount =
+          (currentAnim.frames && currentAnim.frames.length) || frameRate;
+        const estMs = (frameCount / Math.max(1, frameRate)) * 1000 + 30; // small buffer
+        // Hard cap (not longer than 1.2s so we don't get stuck)
+        const capped = Math.min(estMs, 1200);
+        this.scene.time.delayedCall(capped, safeClear);
+        // Also clear on actual animation complete (whichever happens first)
+        p.once("animationcomplete", (anim) => {
+          if (anim && anim.key === key) safeClear();
+        });
+      } else {
+        // If no attack animation detected, rely on the shorter fallback
+        this.scene.time.delayedCall(350, safeClear);
+      }
+    } catch (_) {}
     return true;
   }
 
-  // Draven-specific: simple staff arc swipe similar to Thorg's visual for now
+  // Draven splash attack trigger
   handlePointerDown() {
-    const p = this.player;
-    const direction = p.flipX ? -1 : 1;
-    const range = 105;
-    const duration = 260;
-    const stats =
-      (this.constructor.getStats && this.constructor.getStats()) || {};
-    const damage = stats.damage;
-
-    return this.performDefaultAttack(() => {
-      if (
-        this.scene.anims &&
-        (this.scene.anims.exists(`${NAME}-throw`) ||
-          this.scene.anims.exists("throw"))
-      ) {
-        p.anims.play(
-          this.scene.anims.exists(`${NAME}-throw`) ? `${NAME}-throw` : "throw",
-          true
-        );
-      }
-
-      // Visual placeholder: small arc draw using graphics
-      const g = this.scene.add.graphics();
-      g.setDepth(5);
-      g.setBlendMode(Phaser.BlendModes.ADD);
-      const main = 0xffe29e;
-      const outline = 0xfff6d1;
-      const thickness = Math.max(12, Math.round(range * 0.18));
-      const rx = range;
-      const ry = Math.round(range * 0.55);
-      const rxInner = Math.max(4, rx - thickness);
-      const ryInner = Math.max(3, ry - Math.round(thickness * 0.7));
-      const cx = () => p.x + (direction >= 0 ? 20 : -20);
-      const cy = () => p.y - p.height * 0.15;
-      const ept = (theta, rx0, ry0) => ({
-        x: cx() + direction * rx0 * Math.cos(theta),
-        y: cy() + ry0 * Math.sin(theta),
-      });
-
-      const startRad = Phaser.Math.DegToRad(-80);
-      const endRad = Phaser.Math.DegToRad(80);
-      const proxy = { t: 0 };
-      const steps = 18;
-      this.scene.tweens.add({
-        targets: proxy,
-        t: 1,
-        duration,
-        ease: "Sine.easeOut",
-        onUpdate: () => {
-          const now = Phaser.Math.Linear(startRad, endRad, proxy.t);
-          const t0 = Phaser.Math.Linear(
-            startRad,
-            now,
-            Math.max(0, proxy.t - 0.25)
-          );
-          g.clear();
-          g.fillStyle(main, 0.85);
-          g.beginPath();
-          for (let i = 0; i <= steps; i++) {
-            const a = Phaser.Math.Linear(t0, now, i / steps);
-            const pnt = ept(a, rx, ry);
-            if (i === 0) g.moveTo(pnt.x, pnt.y);
-            else g.lineTo(pnt.x, pnt.y);
-          }
-          for (let i = steps; i >= 0; i--) {
-            const a = Phaser.Math.Linear(t0, now, i / steps);
-            const pnt = ept(a, rxInner, ryInner);
-            g.lineTo(pnt.x, pnt.y);
-          }
-          g.closePath();
-          g.fillPath();
-          g.lineStyle(Math.max(2, Math.floor(thickness * 0.3)), outline, 0.9);
-          g.beginPath();
-          for (let i = 0; i <= steps; i++) {
-            const a = Phaser.Math.Linear(
-              Math.max(t0, now - 0.25),
-              now,
-              i / steps
-            );
-            const pnt = ept(a, rx + 2, ry + 1);
-            if (i === 0) g.moveTo(pnt.x, pnt.y);
-            else g.lineTo(pnt.x, pnt.y);
-          }
-          g.strokePath();
-        },
-        onComplete: () => g.destroy(),
-      });
-
-      // Owner-side simple hit detection in arc
-      const already = new Set();
-      const enemies = Object.values(this.opponentPlayersRef || {});
-      const tip = { x: () => cx() + direction * rx, y: () => cy() };
-      this.scene.time.delayedCall(Math.floor(duration * 0.5), () => {
-        for (const wrap of enemies) {
-          const spr = wrap && wrap.opponent;
-          const name = wrap && wrap.username;
-          if (!spr || !name || already.has(name)) continue;
-          const dist = Phaser.Math.Distance.Between(
-            spr.x,
-            spr.y,
-            tip.x(),
-            tip.y()
-          );
-          const dx = spr.x - cx();
-          if (dist <= 50 && Math.sign(dx) === Math.sign(direction)) {
-            already.add(name);
-            socket.emit("hit", {
-              attacker: this.username,
-              target: name,
-              damage,
-              gameId: this.gameId,
-            });
-          }
-        }
-      });
-
-      return {
-        name: this.username,
-        type: `${NAME}-slash`,
-        direction,
-        range,
-        duration,
-      };
-    });
+    return this.performDefaultAttack(() => performDravenSplashAttack(this));
   }
 }
 
