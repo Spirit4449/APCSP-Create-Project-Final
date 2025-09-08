@@ -27,6 +27,15 @@ module.exports = {
     },
     historyApiFallback: true,
   },
+    stats: {
+    all: false,          // disable everything
+    errors: true,        // show errors
+    warnings: true,      // show warnings
+    timings: true,       // show build timings
+    builtAt: true,       // show when build happened
+    modules: false,      // hide module info
+    assets: false,        // show output files
+  },
   module: {
     rules: [
       {

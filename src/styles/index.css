@@ -96,7 +96,6 @@ h3 {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: flex-start;
   gap: 0; /* ensure no space between children */
   padding-top: 10px;
   transition: all 0.3s ease;
@@ -234,7 +233,7 @@ h3 {
   /* No gap between character and platform; status will overlap the seam */
   margin-bottom: 0;
   border-radius: 8px;
-  padding: 5px;
+  padding: 5px 5px 0px 5px;
   /* Ensure sprite stays at top regardless of platform size */
   min-height: 80px;
 }
@@ -263,8 +262,8 @@ h3 {
 
 /* Character sprite - responsive sizing, anchored to bottom */
 .character-sprite {
-  width: min(5vw, 70px);
-  height: min(7vw, 90px);
+  width: min(7vw, 90px);
+  height: min(7vw, 100px);
   margin-top: auto; /* push sprite to bottom within the slot */
   margin-bottom: 0;
   filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.5));
@@ -284,6 +283,12 @@ h3 {
   align-items: center;
   justify-content: center;
   transition: transform 0.2s ease;
+}
+
+.random {
+  width: 60px;
+  height: 60px;
+  margin-bottom: 10px;
 }
 
 /* Username above character - positioned relative to sprite at top */
@@ -570,8 +575,8 @@ h3 {
 /* Responsive adjustments for smaller screens */
 @media (max-width: 768px) {
   .mode-1 .platform {
-    width: min(40vw, 300px);
-    height: min(20vh, 150px);
+    width: min(40vw, 340px);
+    height: min(20vh, 170px);
   }
 
   .mode-2 .platform {
@@ -607,8 +612,8 @@ h3 {
   }
 
   .character-sprite {
-    width: min(8vw, 50px);
-    height: min(8vw, 50px);
+    width: max(8vw, 50px);
+    height: max(8vw, 50px);
   }
 }
 

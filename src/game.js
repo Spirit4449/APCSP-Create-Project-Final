@@ -73,14 +73,14 @@ let gameInitialized = false; // track if game has been initialized
 
 // Movement throttling variables
 let lastMovementSent = 0;
-const movementThrottleMs = 16; // ~60Hz movement updates for snappier remote view
+const movementThrottleMs = 20; // ~60Hz movement updates for snappier remote view
 let lastPlayerState = { x: 0, y: 0, flip: false, animation: null };
 
 // Server snapshot interpolation
 let stateActive = false; // set true once we start receiving server snapshots
 const stateBuffer = []; // queue of { t, players: { [username]: {x,y,flip,animation} } }
 const MAX_STATE_BUFFER = 60; // ~4 seconds at 15 Hz
-let interpDelayMs = 90; // lower delay for more responsiveness; increase if jittery
+let interpDelayMs = 120; // lower delay for more responsiveness; increase if jittery
 let clockOffsetMs = 0; // serverTime - clientTime estimate; helps when device clock is off
 let clockCalibrated = false;
 
@@ -778,17 +778,25 @@ class GameScene extends Phaser.Scene {
         targetY = aPosData.y;
       }
 
-      // Low-pass filter to reduce snap: move a fraction toward target each frame
+      // Low-pass filter to reduce snap; also add grounded-snap to avoid hover above ground
       const dx = targetX - spr.x;
       const dy = targetY - spr.y;
       const distSq = dx * dx + dy * dy;
       const maxSnapDistSq = 450 * 450; // snap if teleported far
+      // Determine if animation suggests grounded (idle or running)
+      const animSrc = bPosData && bPosData.animation ? bPosData : aPosData;
+      const animKey = (animSrc && animSrc.animation) || "";
+      const looksGrounded =
+        /(?:^|-)idle$/.test(animKey) || /(?:^|-)running$/.test(animKey);
       // Factor based on frame delta (keeps feel similar across FPS)
       const dt = this.game?.loop?.delta || 16.7;
       const base = 0.18; // smoothing strength
       const smoothing = 1 - Math.pow(1 - base, dt / 16.7);
-      if (distSq > maxSnapDistSq) {
-        // Large teleport or spawn: snap to avoid long easing trails
+      const closeEpsilon = 25; // if within this many px, snap to avoid hover
+      const closeEnough =
+        Math.abs(dy) <= closeEpsilon && Math.abs(dx) <= closeEpsilon;
+      if (distSq > maxSnapDistSq || closeEnough || looksGrounded) {
+        // Snap when teleporting, when very close, or when grounded animation indicates landing
         spr.x = targetX;
         spr.y = targetY;
       } else {
@@ -797,7 +805,6 @@ class GameScene extends Phaser.Scene {
       }
 
       // Orientation/animation: take from newer if present
-      const animSrc = bPosData && bPosData.animation ? bPosData : aPosData;
       if (animSrc) {
         const prevFlip = spr.flipX;
         spr.flipX = !!animSrc.flip;
