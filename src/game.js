@@ -261,8 +261,8 @@ function setupGameEventListeners() {
         wrapper = op;
       }
 
-  // Do NOT snap the opponent sprite to packet.origin; keep interpolation smooth.
-  // We'll only use origin for spawning projectiles/effects coordinates below.
+      // Do NOT snap the opponent sprite to packet.origin; keep interpolation smooth.
+      // We'll only use origin for spawning projectiles/effects coordinates below.
 
       // Resolve character (packet.character overrides roster info if present)
       const charKey = (character || (pd && pd.char_class) || "").toLowerCase();
@@ -278,7 +278,11 @@ function setupGameEventListeners() {
       const consumed = handleRemoteAttack(gameScene, charKey, act, wrapper);
       if (!consumed) {
         // Optional dev log for unhandled action types
-        console.debug("Unhandled remote action", { playerName, charKey, action });
+        console.debug("Unhandled remote action", {
+          playerName,
+          charKey,
+          action,
+        });
       }
     } catch (err) {
       console.warn("Failed to handle remote game:action", err);
