@@ -29,6 +29,11 @@ class draven {
       `${staticPath}/${NAME}/explosion.png`,
       `${staticPath}/${NAME}/explosion.json`
     );
+  // Fireball / splash SFX
+  scene.load.audio("draven-fireball", `${staticPath}/${NAME}/fireball.mp3`);
+    if (!scene.sound.get("draven-hit")) {
+      scene.load.audio("draven-hit", `${staticPath}/draven/hit.mp3`);
+    }
     // Ensure nearest-neighbor sampling for crisp pixel art
     scene.load.on(Phaser.Loader.Events.COMPLETE, () => {
       const tex = scene.textures.get(NAME);

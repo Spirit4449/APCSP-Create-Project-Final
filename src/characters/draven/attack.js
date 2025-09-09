@@ -4,6 +4,7 @@ import socket from "../../socket";
 const SPLASH_W = 150;
 const SPLASH_H = 130; // user requested 200x200 (previous was 155 height)
 const EXPLOSION_DELAY_MS = 250; // total active window length; explosion at end
+const FLIP_UNLOCK_MS = 700; // how long facing stays locked regardless of explosion timing
 const DAMAGE_TICK_MS = 120; // damage application cadence inside the splash
 const DAMAGE_START_MS = 130; // telegraph period before any damage can occur
 const TIP_OFFSET = 50; // horizontal distance from player center to tip
@@ -21,7 +22,16 @@ function makeId() {
 export function performDravenSplashAttack(instance) {
   const { scene, player: p, username, gameId, opponentPlayersRef } = instance;
 
-  const direction = p.flipX ? -1 : 1;
+  // Lock facing direction for the whole attack window
+  const direction = p.flipX ? -1 : 1; // -1 = facing left, 1 = facing right
+  p._lockFlip = true;
+  p._lockedFlipX = p.flipX; // remember original orientation
+  const unlockFlip = () => {
+    if (p && p._lockFlip) {
+      p._lockFlip = false;
+      delete p._lockedFlipX;
+    }
+  };
   const attackId = makeId();
   // Track which opponents have already been hit (each only once per attack instance)
   const hitSet = new Set();
@@ -41,15 +51,31 @@ export function performDravenSplashAttack(instance) {
   // Continuous damage ticking within active window (owner only)
   let elapsed = 0;
   let damageAccum = 0; // accumulator for tick scheduling
+  // Play fireball SFX (local-only)
+  try {
+    if (scene.sound) {
+      scene.sound.play("draven-fireball", { volume: 0.18 });
+    }
+  } catch (_) {}
+
   const updateListener = () => {
     const dt = scene.game.loop.delta || 16;
     elapsed += dt;
     damageAccum += dt;
+    // Reinforce visual flip lock every frame
+    if (p._lockFlip && p._lockedFlipX !== undefined && p.flipX !== p._lockedFlipX) {
+      p.flipX = p._lockedFlipX;
+      if (p.body && p.body.setOffset && typeof p._lockedFlipX === "boolean") {
+        // Attempt to reapply any offset logic if provided by player script
+        if (typeof p.scene !== 'undefined' && p.scene.events) {
+          // No direct accessor to applyFlipOffsetLocal here; player module enforces on change.
+        }
+      }
+    }
     if (elapsed >= DAMAGE_START_MS && damageAccum >= DAMAGE_TICK_MS) {
       damageAccum = 0;
-      // Current dynamic center
-      const dirNow = p.flipX ? -1 : 1;
-      const cx = p.x + (dirNow > 0 ? TIP_OFFSET : -TIP_OFFSET);
+      // Center uses locked direction, not current flip state
+      const cx = p.x + (direction > 0 ? TIP_OFFSET : -TIP_OFFSET);
       const cy = p.y - p.height * 0.15;
       applySplashDamage({
         scene,
@@ -66,14 +92,15 @@ export function performDravenSplashAttack(instance) {
     if (elapsed >= EXPLOSION_DELAY_MS) {
       // End of window: cleanup & explosion visual
       scene.events.off("update", updateListener);
-  // (no debug box to destroy)
-      const dirEnd = p.flipX ? -1 : 1;
-      const ex = p.x + (dirEnd > 0 ? TIP_OFFSET : -TIP_OFFSET);
+      // (no debug box to destroy)
+      const ex = p.x + (direction > 0 ? TIP_OFFSET : -TIP_OFFSET);
       const ey = p.y - p.height * 0.15;
       spawnExplosion(scene, ex, ey);
     }
   };
   scene.events.on("update", updateListener);
+  // Unlock facing after fixed delay independent of explosion window
+  scene.time.delayedCall(FLIP_UNLOCK_MS, unlockFlip);
 
   // Broadcast action so other players see tracking box & explosion
   return {
@@ -105,6 +132,7 @@ function applySplashDamage({
   const top = centerY - h / 2 - inflate;
   const bottom = centerY + h / 2 + inflate;
   const list = Object.values(opponents || {});
+  let hitAny = false;
   for (const wrap of list) {
     const spr = wrap && wrap.opponent;
     const name = wrap && wrap.username;
@@ -134,10 +162,16 @@ function applySplashDamage({
         attackType: "basic", // treat as basic attack damage
         gameId,
       });
+      hitAny = true;
       // Optional: tiny debug flash (comment out in production)
       // const flash = scene.add.rectangle((bx1+bx2)/2, (by1+by2)/2, 10, 10, 0xffd28a, 0.6);
       // scene.tweens.add({ targets: flash, alpha: 0, duration: 180, onComplete: ()=> flash.destroy() });
     }
+  }
+  if (hitAny) {
+    try {
+      scene.sound.play("draven-hit", { volume: 0.18 });
+    } catch (_) {}
   }
 }
 

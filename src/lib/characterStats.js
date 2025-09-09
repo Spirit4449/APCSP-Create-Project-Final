@@ -51,12 +51,12 @@ export const characterStats = {
   },
 
   draven: {
-    baseHealth: 6000,
+    baseHealth: 6500,
     attackDescription:
       "Puffs out a magical smoke that deals splash baseDamage to everyone in the path.",
-    baseDamage: 1800,
-    ammoCooldownMs: 250,
-    ammoReloadMs: 1700,
+    baseDamage: 2000,
+    ammoCooldownMs: 450,
+    ammoReloadMs: 1600,
     ammoCapacity: 3,
     specialDescription: "Unleashes a staff nova that expands outward.",
     specialBaseDamage: 2400,

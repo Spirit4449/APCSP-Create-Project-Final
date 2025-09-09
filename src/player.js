@@ -367,6 +367,13 @@ function drawAmmoBar(forcedX, forcedY) {
 
 export function handlePlayerMovement(scene) {
   // Movement tuning knobs (edit to change the feel):
+  // Enforce facing lock (e.g., Draven splash) BEFORE any movement logic mutates flip state
+  if (player && player._lockFlip && player._lockedFlipX !== undefined) {
+    if (player.flipX !== player._lockedFlipX) {
+      player.flipX = player._lockedFlipX;
+      if (applyFlipOffsetLocal) applyFlipOffsetLocal();
+    }
+  }
   // - maxSpeed: top horizontal running speed. Higher = faster.
   const maxSpeed = 260;
   // - accel: how fast you speed up on ground. Higher = snappier starts.
@@ -426,9 +433,12 @@ export function handlePlayerMovement(scene) {
     }
     player.setDragX(onGround ? dragGround : dragAir);
     const wasFlip = player.flipX;
-    player.flipX = true; // Mirrors the body of the player
-    if (player.flipX !== wasFlip && applyFlipOffsetLocal)
-      applyFlipOffsetLocal();
+    if (!player._lockFlip) {
+      player.flipX = true; // Mirrors the body of the player
+    } else if (player._lockedFlipX !== undefined) {
+      player.flipX = player._lockedFlipX; // enforce locked facing
+    }
+    if (player.flipX !== wasFlip && applyFlipOffsetLocal) applyFlipOffsetLocal();
     isMoving = true; // Sets the isMoving to true
     if (player.body.touching.down && !isAttacking && !dead) {
       // If the player is not in the air or attacking or dead, it plays the running animation
@@ -449,9 +459,12 @@ export function handlePlayerMovement(scene) {
       indicatorTriangle.clear(); // Removes indicator triangle if the player has moved
     }
     const wasFlip = player.flipX;
-    player.flipX = false; // Undos the mirror of the player
-    if (player.flipX !== wasFlip && applyFlipOffsetLocal)
-      applyFlipOffsetLocal();
+    if (!player._lockFlip) {
+      player.flipX = false; // Undo mirror
+    } else if (player._lockedFlipX !== undefined) {
+      player.flipX = player._lockedFlipX; // keep locked
+    }
+    if (player.flipX !== wasFlip && applyFlipOffsetLocal) applyFlipOffsetLocal();
     const onGroundRight = player.body.touching.down;
     const aRight = onGroundRight ? accel : airAccel;
     const lockActiveRight = (player._wallKickLockUntil || 0) > Date.now();
@@ -609,6 +622,10 @@ export function handlePlayerMovement(scene) {
     player.setAccelerationX(0);
     const onGround = player.body.touching.down;
     player.setDragX(onGround ? dragGround : dragAir);
+    // Maintain locked facing if an attack is forcing orientation
+    if (player._lockFlip && player._lockedFlipX !== undefined) {
+      player.flipX = player._lockedFlipX;
+    }
     isMoving = false;
   }
 
@@ -633,10 +650,18 @@ export function handlePlayerMovement(scene) {
     const vertKick = Math.max(jumpSpeed + 30, 220); // slightly less vertical pop
 
     // Face away from the wall and fix body offset
-    const wasFlip = player.flipX;
-    player.flipX = !fromLeft;
-    if (player.flipX !== wasFlip && applyFlipOffsetLocal)
-      applyFlipOffsetLocal();
+    if (!player._lockFlip) {
+      const wasFlip = player.flipX;
+      player.flipX = !fromLeft;
+      if (player.flipX !== wasFlip && applyFlipOffsetLocal)
+        applyFlipOffsetLocal();
+    } else if (player._lockedFlipX !== undefined) {
+      // Reinforce locked facing
+      if (player.flipX !== player._lockedFlipX) {
+        player.flipX = player._lockedFlipX;
+        if (applyFlipOffsetLocal) applyFlipOffsetLocal();
+      }
+    }
 
     // Play a jump-like animation
     if (!isAttacking) {
