@@ -438,7 +438,8 @@ export function handlePlayerMovement(scene) {
     } else if (player._lockedFlipX !== undefined) {
       player.flipX = player._lockedFlipX; // enforce locked facing
     }
-    if (player.flipX !== wasFlip && applyFlipOffsetLocal) applyFlipOffsetLocal();
+    if (player.flipX !== wasFlip && applyFlipOffsetLocal)
+      applyFlipOffsetLocal();
     isMoving = true; // Sets the isMoving to true
     if (player.body.touching.down && !isAttacking && !dead) {
       // If the player is not in the air or attacking or dead, it plays the running animation
@@ -464,7 +465,8 @@ export function handlePlayerMovement(scene) {
     } else if (player._lockedFlipX !== undefined) {
       player.flipX = player._lockedFlipX; // keep locked
     }
-    if (player.flipX !== wasFlip && applyFlipOffsetLocal) applyFlipOffsetLocal();
+    if (player.flipX !== wasFlip && applyFlipOffsetLocal)
+      applyFlipOffsetLocal();
     const onGroundRight = player.body.touching.down;
     const aRight = onGroundRight ? accel : airAccel;
     const lockActiveRight = (player._wallKickLockUntil || 0) > Date.now();

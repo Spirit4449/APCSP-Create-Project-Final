@@ -21,6 +21,7 @@ import {
 import socket from "./socket";
 import OpPlayer from "./opPlayer";
 import { spawnDust, prewarmDust } from "./effects";
+import { changeDebugState } from "./characters/draven/attack";
 
 // Make Phaser globally available for character modules
 window.Phaser = Phaser;
@@ -569,6 +570,7 @@ class GameScene extends Phaser.Scene {
       if (!world) return;
       const enable = !world.drawDebug;
       world.drawDebug = enable;
+      changeDebugState(enable);
       if (enable) {
         // Create debug graphic if Phaser hasn't created it yet
         try {

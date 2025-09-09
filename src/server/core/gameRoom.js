@@ -574,16 +574,16 @@ class GameRoom {
       const maxDist = attackType === "special" ? 1000 : 850; // px
       if (!isSelf && dist > maxDist) return; // ignore impossible hits
 
-  // Basic per-attacker->target rate limit to avoid accidental double submissions
-  this._recentHits = this._recentHits || new Map(); // key: attacker|target -> timestamp
-  const key = attacker.name + "|" + target.name + "|" + attackType;
-  const now = Date.now();
-  const last = this._recentHits.get(key) || 0;
-  const DUP_WINDOW_MS = 80; // hits within 80ms considered duplicate
-  if (!isSelf && now - last < DUP_WINDOW_MS) return; // duplicate, ignore
-  this._recentHits.set(key, now);
+      // Basic per-attacker->target rate limit to avoid accidental double submissions
+      this._recentHits = this._recentHits || new Map(); // key: attacker|target -> timestamp
+      const key = attacker.name + "|" + target.name + "|" + attackType;
+      const now = Date.now();
+      const last = this._recentHits.get(key) || 0;
+      const DUP_WINDOW_MS = 80; // hits within 80ms considered duplicate
+      if (!isSelf && now - last < DUP_WINDOW_MS) return; // duplicate, ignore
+      this._recentHits.set(key, now);
 
-  // Apply damage
+      // Apply damage
       const old = target.health;
       target.health = Math.max(0, target.health - Math.round(dmg));
       attacker.lastAttackAt = now;

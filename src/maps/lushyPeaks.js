@@ -5,6 +5,8 @@ let base;
 let platform;
 let leftPlatform;
 let rightPlatform;
+let smallLeftPlatform;
+let smallRightPlatform;
 
 const lushyPeaksObjects = [];
 
@@ -37,7 +39,7 @@ export function lushyPeaks(scene) {
 
   // Left Platform
   leftPlatform = scene.physics.add.sprite(
-    centerX - 500,
+    centerX - 490,
     260,
     "lushy-side-platform"
   );
@@ -48,7 +50,7 @@ export function lushyPeaks(scene) {
 
   // Right Platform
   rightPlatform = scene.physics.add.sprite(
-    centerX + 500,
+    centerX + 490,
     260,
     "lushy-side-platform"
   );
@@ -56,6 +58,27 @@ export function lushyPeaks(scene) {
   rightPlatform.body.allowGravity = false;
   rightPlatform.setImmovable(true);
   lushyPeaksObjects.push(rightPlatform);
+
+  smallLeftPlatform = scene.physics.add.sprite(
+    centerX - 580,
+    530,
+    "mangrove-tiny-platform"
+  );
+  smallLeftPlatform.setScale(0.45);
+  smallLeftPlatform.body.allowGravity = false;
+  smallLeftPlatform.setImmovable(true);
+  lushyPeaksObjects.push(smallLeftPlatform);
+
+  smallRightPlatform = scene.physics.add.sprite(
+    centerX + 580,
+    530,
+    "mangrove-tiny-platform"
+  );
+  smallRightPlatform.setScale(0.45);
+  smallRightPlatform.body.allowGravity = false;
+  smallRightPlatform.setImmovable(true);
+  lushyPeaksObjects.push(smallRightPlatform);
+
 }
 
 // Determine a consistent spawn position for Lushy Peaks
@@ -80,4 +103,4 @@ export function positionLushySpawn(scene, sprite, team, index, teamSize) {
   }
 }
 
-export { lushyPeaksObjects, base, platform };
+export { lushyPeaksObjects };

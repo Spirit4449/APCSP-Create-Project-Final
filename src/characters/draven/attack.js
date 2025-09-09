@@ -1,13 +1,16 @@
 // Draven splash attack extracted
 import socket from "../../socket";
 
-const SPLASH_W = 150;
-const SPLASH_H = 130; // user requested 200x200 (previous was 155 height)
-const EXPLOSION_DELAY_MS = 250; // total active window length; explosion at end
-const FLIP_UNLOCK_MS = 700; // how long facing stays locked regardless of explosion timing
-const DAMAGE_TICK_MS = 120; // damage application cadence inside the splash
-const DAMAGE_START_MS = 130; // telegraph period before any damage can occur
-const TIP_OFFSET = 50; // horizontal distance from player center to tip
+const SPLASH_W = 165;
+const SPLASH_H = 130; // Tuned final max height
+const ACTIVE_WINDOW_MS = 450; // Attack stays active this long (moving with player)
+const FLIP_UNLOCK_MS = 600; // Facing locked for full active window
+const DAMAGE_TICK_MS = 90; // Damage cadence
+const DAMAGE_START_MS = 100; // Telegraph before any damage
+const TIP_OFFSET = 50; // Horizontal distance from player center to splash center
+const MIN_SPLASH_H = 20; // Initial small height for upward sweep
+const GROW_DURATION_MS = 220; // Time over which the hitbox grows to full height
+var DEBUG_DRAW = false; // Draw debug rectangle of current hitbox
 
 // Rectangle overlap helper (inclusive edges)
 function rectsOverlap(ax1, ay1, ax2, ay2, bx1, by1, bx2, by2) {
@@ -51,6 +54,11 @@ export function performDravenSplashAttack(instance) {
   // Continuous damage ticking within active window (owner only)
   let elapsed = 0;
   let damageAccum = 0; // accumulator for tick scheduling
+  let dbg = null;
+  if (DEBUG_DRAW && scene && scene.add) {
+    dbg = scene.add.graphics();
+    dbg.setDepth(8);
+  }
   // Play fireball SFX (local-only)
   try {
     if (scene.sound) {
@@ -63,54 +71,76 @@ export function performDravenSplashAttack(instance) {
     elapsed += dt;
     damageAccum += dt;
     // Reinforce visual flip lock every frame
-    if (p._lockFlip && p._lockedFlipX !== undefined && p.flipX !== p._lockedFlipX) {
+    if (
+      p._lockFlip &&
+      p._lockedFlipX !== undefined &&
+      p.flipX !== p._lockedFlipX
+    ) {
       p.flipX = p._lockedFlipX;
       if (p.body && p.body.setOffset && typeof p._lockedFlipX === "boolean") {
         // Attempt to reapply any offset logic if provided by player script
-        if (typeof p.scene !== 'undefined' && p.scene.events) {
+        if (typeof p.scene !== "undefined" && p.scene.events) {
           // No direct accessor to applyFlipOffsetLocal here; player module enforces on change.
         }
       }
     }
     if (elapsed >= DAMAGE_START_MS && damageAccum >= DAMAGE_TICK_MS) {
       damageAccum = 0;
-      // Center uses locked direction, not current flip state
+      // Dynamic center (moves with player) using locked direction
       const cx = p.x + (direction > 0 ? TIP_OFFSET : -TIP_OFFSET);
-      const cy = p.y - p.height * 0.15;
-      applySplashDamage({
+      const baseCenterY = p.y - p.height * 0.15; // original center reference
+      const growT = Math.min(1, elapsed / GROW_DURATION_MS);
+      const currentH = MIN_SPLASH_H + (SPLASH_H - MIN_SPLASH_H) * growT;
+      const finalBottom = baseCenterY + SPLASH_H / 2; // anchor bottom at final position
+      const rectTop = finalBottom - currentH; // grow upward by moving top upward
+      const cy = (rectTop + finalBottom) / 2; // derived center for current rectangle
+      const hitData = applySplashDamage({
         scene,
         centerX: cx,
         centerY: cy,
         w: SPLASH_W,
-        h: SPLASH_H,
+        h: currentH,
         attacker: username,
         gameId,
         opponents: opponentPlayersRef,
         hitSet,
       });
+      // For each newly hit target spawn an explosion immediately
+      if (hitData && hitData.newHits && hitData.newHits.length) {
+        for (const h of hitData.newHits) {
+          spawnExplosion(scene, h.x, h.y);
+          socket.emit("game:action", {
+            type: "draven-splash-explode",
+            id: attackId,
+            x: h.x,
+            y: h.y,
+            attacker: username,
+          });
+        }
+      }
+      if (DEBUG_DRAW && dbg) {
+        dbg.clear();
+        dbg.lineStyle(2, 0xffd28a, 0.9);
+        dbg.fillStyle(0xffd28a, 0.15);
+        const left = cx - SPLASH_W / 2;
+        dbg.strokeRect(left, rectTop, SPLASH_W, currentH);
+        dbg.fillRect(left, rectTop, SPLASH_W, currentH);
+      }
     }
-    if (elapsed >= EXPLOSION_DELAY_MS) {
-      // End of window: cleanup & explosion visual
+    if (elapsed >= ACTIVE_WINDOW_MS) {
       scene.events.off("update", updateListener);
-      // (no debug box to destroy)
-      const ex = p.x + (direction > 0 ? TIP_OFFSET : -TIP_OFFSET);
-      const ey = p.y - p.height * 0.15;
-      spawnExplosion(scene, ex, ey);
+      if (dbg) dbg.destroy();
     }
   };
   scene.events.on("update", updateListener);
   // Unlock facing after fixed delay independent of explosion window
   scene.time.delayedCall(FLIP_UNLOCK_MS, unlockFlip);
 
-  // Broadcast action so other players see tracking box & explosion
+  // Broadcast only minimal data (old config removed)
   return {
     type: "draven-splash",
     id: attackId,
     direction,
-    w: SPLASH_W,
-    h: SPLASH_H,
-    delay: EXPLOSION_DELAY_MS,
-    tipOffset: TIP_OFFSET,
   };
 }
 
@@ -133,6 +163,7 @@ function applySplashDamage({
   const bottom = centerY + h / 2 + inflate;
   const list = Object.values(opponents || {});
   let hitAny = false;
+  const newHits = [];
   for (const wrap of list) {
     const spr = wrap && wrap.opponent;
     const name = wrap && wrap.username;
@@ -163,6 +194,7 @@ function applySplashDamage({
         gameId,
       });
       hitAny = true;
+      newHits.push({ x: (bx1 + bx2) / 2, y: (by1 + by2) / 2 + 4 });
       // Optional: tiny debug flash (comment out in production)
       // const flash = scene.add.rectangle((bx1+bx2)/2, (by1+by2)/2, 10, 10, 0xffd28a, 0.6);
       // scene.tweens.add({ targets: flash, alpha: 0, duration: 180, onComplete: ()=> flash.destroy() });
@@ -172,7 +204,9 @@ function applySplashDamage({
     try {
       scene.sound.play("draven-hit", { volume: 0.18 });
     } catch (_) {}
+    return { newHits };
   }
+  return null;
 }
 
 export function spawnExplosion(scene, x, y) {
@@ -186,4 +220,11 @@ export function spawnExplosion(scene, x, y) {
   e.once("animationcomplete", () => e.destroy());
   return e;
 }
-// (Removed stale handlePointerDown helper; logic lives in constructor now)
+
+export function changeDebugState(state) {
+  if (state) {
+    DEBUG_DRAW = true;
+  } else {
+    DEBUG_DRAW = false;
+  }
+}
