@@ -164,10 +164,7 @@ function setupGameEventListeners() {
   // Game start countdown
   socket.on("game:start", (data) => {
     console.log("Game starting:", data);
-    if (data.countdown && gameScene) {
-      // Show countdown in UI
-      showCountdown(data.countdown);
-    }
+    
   });
 
   // Server snapshots for interpolation
@@ -343,39 +340,6 @@ function initializePlayers(players) {
   });
 }
 
-// Show countdown UI
-function showCountdown(seconds) {
-  // Create or update countdown display
-  let countdownEl = document.getElementById("countdown");
-  if (!countdownEl) {
-    countdownEl = document.createElement("div");
-    countdownEl.id = "countdown";
-    countdownEl.style.cssText = `
-      position: fixed;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      font-size: 72px;
-      font-weight: bold;
-      color: white;
-      text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
-      z-index: 1000;
-      font-family: 'Press Start 2P', monospace;
-    `;
-    document.body.appendChild(countdownEl);
-  }
-
-  countdownEl.textContent = seconds;
-
-  // Remove countdown after it finishes
-  if (seconds <= 0) {
-    setTimeout(() => {
-      if (countdownEl) {
-        countdownEl.remove();
-      }
-    }, 1000);
-  }
-}
 
 // Initialize game when page loads
 document.addEventListener("DOMContentLoaded", initializeGame);

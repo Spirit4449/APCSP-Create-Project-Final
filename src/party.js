@@ -1,5 +1,5 @@
 import { sonner } from "./lib/sonner.js";
-import socket from "./socket";
+import socket, { ensureSocketConnected } from "./socket";
 
 // Track last known party roster to detect joins/leaves
 let __partyRosterNames = null; // Set<string> of member names
@@ -63,6 +63,9 @@ export function stopHeartbeat() {
 
 export function socketInit() {
   const currentPartyId = checkIfInParty();
+
+  // Safety: if code runs before index.js triggered connection (e.g., alternate entry), ensure connect once.
+  if (!socket.connected) ensureSocketConnected();
 
   // Connection lifecycle
   socket.on("connect", () => {

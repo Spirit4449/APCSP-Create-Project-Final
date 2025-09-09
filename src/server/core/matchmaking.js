@@ -209,8 +209,9 @@ function createMatchmaking({ io, db, teamSizeByMode, gameHub = null }) {
   }
 
   async function maybeStopLoop() {
+    // Only count unclaimed queued tickets; claimed tickets are in-progress and should not keep loop alive
     const [{ c }] = await db.runQuery(
-      "SELECT COUNT(*) AS c FROM match_tickets WHERE status='queued'"
+      "SELECT COUNT(*) AS c FROM match_tickets WHERE status='queued' AND (claimed_by IS NULL OR claimed_by='')"
     );
     if (Number(c) === 0 && loop) {
       clearInterval(loop);
@@ -280,6 +281,17 @@ function createMatchmaking({ io, db, teamSizeByMode, gameHub = null }) {
           }
         }
       }
+      // Best-effort cleanup of any stale claimed tickets (claimed but never deleted due to crash/race)
+      try {
+        const stale = await db.runQuery(
+          "DELETE FROM match_tickets WHERE status='queued' AND claimed_by IS NOT NULL AND claimed_by<>'' AND created_at < (NOW() - INTERVAL 60 SECOND)"
+        );
+        if (stale?.affectedRows) {
+          console.log(
+            `[mm] cleanup removed stale claimed tickets=${stale.affectedRows}`
+          );
+        }
+      } catch (_) {}
     } catch (e) {
       console.warn("[mm] tick error:", e?.message);
     }
@@ -530,6 +542,21 @@ function createMatchmaking({ io, db, teamSizeByMode, gameHub = null }) {
           if (ids.length) await db.setPartiesStatus(ids, PARTY_STATUS.LIVE);
         } catch (_) {}
         console.log(`[match:live] #${matchId}`);
+        // Defensive: remove any leftover tickets referencing these users (should already be deleted)
+        try {
+          const placeholders = userIds.map(() => "?").join(",");
+          if (userIds.length) {
+            const r = await db.runQuery(
+              `DELETE FROM match_tickets WHERE user_id IN (${placeholders}) OR party_id IN (SELECT DISTINCT party_id FROM match_participants WHERE match_id=?)`,
+              [...userIds, matchId]
+            );
+            if (r?.affectedRows) {
+              console.log(
+                `[match:live] cleaned stray tickets=${r.affectedRows}`
+              );
+            }
+          }
+        } catch (_) {}
 
         // Create game room when match goes live
         if (gameHub) {
