@@ -30,7 +30,7 @@ class GameRoom {
     // Health/regen tuning (simple, readable constants)
     this.REGEN_DELAY_MS = 3500; // idle time before regen starts
     this.REGEN_TICK_MS = 1500; // heal every 1.5 seconds in discrete ticks
-    this.REGEN_MISSING_RATIO = 0.30; // heal 30% of missing health each tick (regressive)
+    this.REGEN_MISSING_RATIO = 0.25; // heal 25% of missing health each tick (regressive)
     this.REGEN_MIN_ABS = 500; // absolute minimum heal per tick (fixed amount, not percent)
     this.REGEN_BROADCAST_MIN_MS = 120; // avoid spamming health-update too fast
 

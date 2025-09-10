@@ -81,7 +81,7 @@ let lastPlayerState = { x: 0, y: 0, flip: false, animation: null };
 let stateActive = false; // set true once we start receiving server snapshots
 const stateBuffer = []; // queue of { t, players: { [username]: {x,y,flip,animation} } }
 const MAX_STATE_BUFFER = 60; // ~4 seconds at 15 Hz
-let interpDelayMs = 120; // lower delay for more responsiveness; increase if jittery
+let interpDelayMs = 150; // lower delay for more responsiveness; increase if jittery
 let clockOffsetMs = 0; // serverTime - clientTime estimate; helps when device clock is off
 let clockCalibrated = false;
 
@@ -398,7 +398,7 @@ class GameScene extends Phaser.Scene {
     this.load.audio("sfx-damage", `${staticPath}/damage.mp3`);
     this.load.audio("sfx-heal", `${staticPath}/heal.mp3`);
     // Music (non-looping bgm, separate win/lose stingers)
-    this.load.audio("main", `${staticPath}/main.wav`);
+    this.load.audio("main", `${staticPath}/main.mp3`);
     this.load.audio("win", `${staticPath}/win.mp3`);
     this.load.audio("lose", `${staticPath}/lose.wav`);
   }
