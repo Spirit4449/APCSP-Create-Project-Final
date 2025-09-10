@@ -185,7 +185,10 @@ function setupGameEventListeners() {
       if (!monoCalibrated && typeof snapshot.tMono === "number") {
         serverMonoOffset = snapshot.tMono - clientMonoNow; // server = client + offset
         monoCalibrated = true;
-        console.log("Monotonic offset calibrated (ms):", serverMonoOffset.toFixed(2));
+        console.log(
+          "Monotonic offset calibrated (ms):",
+          serverMonoOffset.toFixed(2)
+        );
       }
     } catch (_) {}
 
@@ -256,13 +259,18 @@ function setupGameEventListeners() {
       const cm = performance.now();
       if (cm - lastDiagLogMono > 4000 && snapshotSpacings.length > 5) {
         const arr = snapshotSpacings.slice(-80);
-        const avg = arr.reduce((a,b)=>a+b,0)/arr.length;
-        const variance = arr.reduce((a,b)=>a+Math.pow(b-avg,2),0)/arr.length;
+        const avg = arr.reduce((a, b) => a + b, 0) / arr.length;
+        const variance =
+          arr.reduce((a, b) => a + Math.pow(b - avg, 2), 0) / arr.length;
         const stdev = Math.sqrt(variance);
-        console.log(`[interp] snapshots avg=${avg.toFixed(2)}ms sd=${stdev.toFixed(2)}ms n=${arr.length}`);
+        console.log(
+          `[interp] snapshots avg=${avg.toFixed(2)}ms sd=${stdev.toFixed(
+            2
+          )}ms n=${arr.length}`
+        );
         lastDiagLogMono = cm;
       }
-    } catch(_) {}
+    } catch (_) {}
   });
 
   // Game actions from other players
@@ -436,7 +444,7 @@ class GameScene extends Phaser.Scene {
     this.load.audio("sfx-damage", `${staticPath}/damage.mp3`);
     this.load.audio("sfx-heal", `${staticPath}/heal.mp3`);
     // Music (non-looping bgm, separate win/lose stingers)
-    this.load.audio("main", `${staticPath}/main.wav`);
+    this.load.audio("main", `${staticPath}/main.mp3`);
     this.load.audio("win", `${staticPath}/win.mp3`);
     this.load.audio("lose", `${staticPath}/lose.wav`);
   }
@@ -714,7 +722,8 @@ class GameScene extends Phaser.Scene {
         ? clientNowMono + serverMonoOffset - interpDelayMs
         : stateBuffer[stateBuffer.length - 1].tMono - 5; // fallback: trail latest slightly
       // Quantize to stable 50ms grid to prevent jitter in alpha
-      const renderTarget = Math.round(rawRenderTarget / SNAP_INTERVAL_MS) * SNAP_INTERVAL_MS;
+      const renderTarget =
+        Math.round(rawRenderTarget / SNAP_INTERVAL_MS) * SNAP_INTERVAL_MS;
 
       // Locate surrounding snapshots
       let aState = null;
@@ -732,7 +741,8 @@ class GameScene extends Phaser.Scene {
       if (aState && bState) {
         const span = bState.tMono - aState.tMono;
         let alpha = span > 0 ? (renderTarget - aState.tMono) / span : 1;
-        if (alpha < 0) alpha = 0; else if (alpha > 1) alpha = 1;
+        if (alpha < 0) alpha = 0;
+        else if (alpha > 1) alpha = 1;
         this.interpolatePlayerStates(aState, bState, alpha);
       } else {
         // Fallbacks
