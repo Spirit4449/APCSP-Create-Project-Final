@@ -90,6 +90,18 @@ const SNAP_INTERVAL_MS = 50; // 20 Hz cadence from server
 let snapshotSpacings = []; // recent spacing deltas
 let lastDiagLogMono = 0;
 
+// ---- Adaptive interpolation / PLL variables (Task 4) ----
+let renderClockMono = null; // our smoothed render timeline in server-monotonic domain
+let lastFramePerfNow = null; // perf.now of previous frame for delta calc
+const MIN_INTERP_DELAY = 120;
+const MAX_INTERP_DELAY = 300;
+// EMA of snapshot spacing & jitter (absolute deviation)
+let spacingEma = null;
+let jitterEma = null;
+const SPACING_EMA_ALPHA = 0.12; // responsiveness of spacing/jitter tracking
+// Debug diag throttle
+let lastAdaptivePrint = 0;
+
 // Game scene reference
 let gameScene = null;
 
@@ -206,12 +218,38 @@ function setupGameEventListeners() {
       snapMono = (performance.now && performance.now()) || Date.now();
     }
 
-    // Track spacing diagnostics
+    // Track spacing diagnostics + adaptive EMA for delay
     if (stateBuffer.length > 0) {
       const prev = stateBuffer[stateBuffer.length - 1].tMono;
       const d = snapMono - prev;
-      if (d >= 0 && d < 500) snapshotSpacings.push(d);
-      if (snapshotSpacings.length > 400) snapshotSpacings.splice(0, 200);
+      if (d >= 0 && d < 500) {
+        snapshotSpacings.push(d);
+        if (snapshotSpacings.length > 400) snapshotSpacings.splice(0, 200);
+        // EMA updates
+        spacingEma =
+          spacingEma == null
+            ? d
+            : spacingEma + (d - spacingEma) * SPACING_EMA_ALPHA;
+        const dev = Math.abs(d - (spacingEma || d));
+        jitterEma =
+          jitterEma == null
+            ? dev
+            : jitterEma + (dev - jitterEma) * SPACING_EMA_ALPHA;
+        // Adaptive delay target: base ~ 3 * spacing + 2 * jitter (bounded)
+        if (spacingEma != null && jitterEma != null) {
+          let targetDelay = spacingEma * 3 + jitterEma * 2;
+          if (targetDelay < MIN_INTERP_DELAY) targetDelay = MIN_INTERP_DELAY;
+          if (targetDelay > MAX_INTERP_DELAY) targetDelay = MAX_INTERP_DELAY;
+          // Smooth adjustments (avoid big jumps)
+          interpDelayMs += (targetDelay - interpDelayMs) * 0.1;
+        }
+      }
+    }
+
+    // Initialize render clock when first snapshot w/ monotonic time arrives
+    if (renderClockMono == null && typeof snapMono === "number") {
+      renderClockMono = snapMono; // start locked
+      lastFramePerfNow = performance.now();
     }
 
     // Late-join safety: create opponents on first snapshot if missing
@@ -716,46 +754,163 @@ class GameScene extends Phaser.Scene {
 
     // Server state interpolation
     if (stateActive && stateBuffer.length > 0) {
-      const clientNowMono = performance.now();
-      // Build render target time in server monotonic domain
-      const rawRenderTarget = monoCalibrated
-        ? clientNowMono + serverMonoOffset - interpDelayMs
-        : stateBuffer[stateBuffer.length - 1].tMono - 5; // fallback: trail latest slightly
-      // Quantize to stable 50ms grid to prevent jitter in alpha
-      const renderTarget =
-        Math.round(rawRenderTarget / SNAP_INTERVAL_MS) * SNAP_INTERVAL_MS;
-
-      // Locate surrounding snapshots
-      let aState = null;
-      let bState = null;
-      for (let i = 0; i < stateBuffer.length - 1; i++) {
-        const a = stateBuffer[i];
-        const b = stateBuffer[i + 1];
-        if (a.tMono <= renderTarget && renderTarget <= b.tMono) {
-          aState = a;
-          bState = b;
-          break;
-        }
-      }
-
-      if (aState && bState) {
-        const span = bState.tMono - aState.tMono;
-        let alpha = span > 0 ? (renderTarget - aState.tMono) / span : 1;
-        if (alpha < 0) alpha = 0;
-        else if (alpha > 1) alpha = 1;
-        this.interpolatePlayerStates(aState, bState, alpha);
+      const perfNow = performance.now();
+      if (renderClockMono == null) {
+        // Fallback: just snap to last
+        const last = stateBuffer[stateBuffer.length - 1];
+        this.interpolatePlayerStates(last, last, 1);
       } else {
-        // Fallbacks
-        if (stateBuffer.length >= 2) {
-          const a = stateBuffer[stateBuffer.length - 2];
-          const b = stateBuffer[stateBuffer.length - 1];
-          this.interpolatePlayerStates(a, b, 1);
-        } else if (stateBuffer.length === 1) {
-          const only = stateBuffer[0];
-          this.interpolatePlayerStates(only, only, 1);
+        // Advance render clock by real frame delta (bounded) then subtract adaptive delay
+        if (lastFramePerfNow == null) lastFramePerfNow = perfNow;
+        let dt = perfNow - lastFramePerfNow;
+        lastFramePerfNow = perfNow;
+        if (dt < 0) dt = 0;
+        if (dt > 250) dt = 250; // clamp huge frame stalls
+        renderClockMono += dt; // advance in server mono domain (assuming near 1:1)
+        let targetMono = renderClockMono - interpDelayMs;
+
+        // Guard: ensure we don't outrun newest snapshot - small margin
+        const newest = stateBuffer[stateBuffer.length - 1].tMono;
+        const oldest = stateBuffer[0].tMono;
+        if (targetMono > newest - 5) {
+          // Pull back gently (fast catch-up)
+          targetMono = newest - 5;
+          renderClockMono = targetMono + interpDelayMs;
+        }
+        // If we're too close to oldest (buffer underrun), push forward
+        if (targetMono < oldest + 5) {
+          targetMono = oldest + 5;
+          renderClockMono = targetMono + interpDelayMs;
+        }
+
+        // PLL correction: measure average spacing vs expected to nudge speed
+        if (spacingEma != null) {
+          const expected = 50; // server nominal spacing
+          const error = spacingEma - expected; // positive => slower than expected
+          // tiny proportional adjustment to render clock to keep phase reasonable
+          renderClockMono += error * 0.02; // extremely conservative
+        }
+
+        // ---- Backlog safeguard ----
+        const headT = newest; // latest snapshot tMono
+        let lagMs = headT - interpDelayMs - targetMono;
+
+        // Hard clamp: never render more than 500ms behind head
+        const MAX_HISTORY_MS = 500;
+        const minTarget = headT - (interpDelayMs + MAX_HISTORY_MS);
+        if (targetMono < minTarget) {
+          console.warn(
+            `[interp] clamping backlog: lag=${lagMs.toFixed(1)}ms buffer=${
+              stateBuffer.length
+            }`
+          );
+          targetMono = minTarget;
+          renderClockMono = targetMono + interpDelayMs;
+
+          // Drop stale snapshots older than target
+          while (
+            stateBuffer.length > 2 &&
+            stateBuffer[1].tMono <= targetMono - 50
+          ) {
+            stateBuffer.shift();
+          }
+          lagMs = headT - interpDelayMs - targetMono;
+        }
+
+        // Fast-forward if we ever fall >1s behind
+        if (lagMs > 1000) {
+          console.warn(`[interp] severe lag reset: lag=${lagMs.toFixed(0)}ms`);
+          targetMono = headT - interpDelayMs;
+          renderClockMono = targetMono + interpDelayMs;
+          // keep only most recent ~10
+          if (stateBuffer.length > 10) {
+            stateBuffer.splice(0, stateBuffer.length - 10);
+          }
+        }
+        // ----------------------------
+
+        // ---- Catch-up PLL (gentle fast-forward when behind) ----
+        {
+          const headT = newest; // latest snapshot tMono
+          const desired = headT - interpDelayMs;
+          let lagMs = desired - targetMono; // >0 means we are behind
+
+          // If we are behind by more than ~2 frames at 20Hz, speed up a bit
+          if (lagMs > 120) {
+            // Proportional gain: move up to 10ms/frame toward the head
+            const gain = 0.12; // small proportional factor
+            const maxPerFrame = 10; // hard cap per frame (ms)
+            const step = Math.min(lagMs * gain, maxPerFrame);
+            targetMono += step;
+            renderClockMono = targetMono + interpDelayMs;
+          }
+
+          // If somehow ahead (negative lag), gently slow down a bit
+          if (lagMs < -60) {
+            const gain = 0.08;
+            const maxPerFrame = 8;
+            const step = Math.min(-lagMs * gain, maxPerFrame);
+            targetMono -= step;
+            renderClockMono = targetMono + interpDelayMs;
+          }
+
+          // Keep buffer tight around target: drop stale snapshots far behind target
+          while (
+            stateBuffer.length > 2 &&
+            stateBuffer[1].tMono <= targetMono - 50
+          ) {
+            stateBuffer.shift();
+          }
+        }
+        // --------------------------------------------------------
+
+        // Locate surrounding snapshots for targetMono
+        let aState = null;
+        let bState = null;
+        for (let i = 0; i < stateBuffer.length - 1; i++) {
+          const a = stateBuffer[i];
+          const b = stateBuffer[i + 1];
+          if (a.tMono <= targetMono && targetMono <= b.tMono) {
+            aState = a;
+            bState = b;
+            break;
+          }
+        }
+
+        if (aState && bState) {
+          const span = bState.tMono - aState.tMono;
+          let alpha = span > 0 ? (targetMono - aState.tMono) / span : 1;
+          if (alpha < 0) alpha = 0;
+          else if (alpha > 1) alpha = 1;
+          this.interpolatePlayerStates(aState, bState, alpha);
+        } else {
+          // Fallbacks
+          if (stateBuffer.length >= 2) {
+            const a = stateBuffer[stateBuffer.length - 2];
+            const b = stateBuffer[stateBuffer.length - 1];
+            this.interpolatePlayerStates(a, b, 1);
+          } else if (stateBuffer.length === 1) {
+            const only = stateBuffer[0];
+            this.interpolatePlayerStates(only, only, 1);
+          }
         }
       }
     }
+
+    // Debug print every ~5s (dev aid) - comment out for production
+    try {
+      const pn = performance.now();
+      if (pn - lastAdaptivePrint > 5000 && spacingEma != null) {
+        lastAdaptivePrint = pn;
+        console.log(
+          `[adaptive] delay=${interpDelayMs.toFixed(
+            1
+          )}ms spacingEma=${spacingEma?.toFixed(
+            2
+          )} jitterEma=${jitterEma?.toFixed(2)} buffer=${stateBuffer.length}`
+        );
+      }
+    } catch (_) {}
 
     // Update health bars for all players
     for (const player in opponentPlayers) {
@@ -796,33 +951,12 @@ class GameScene extends Phaser.Scene {
         targetY = aPosData.y;
       }
 
-      // Low-pass filter to reduce snap; also add grounded-snap to avoid hover above ground
-      const dx = targetX - spr.x;
-      const dy = targetY - spr.y;
-      const distSq = dx * dx + dy * dy;
-      const maxSnapDistSq = 450 * 450; // snap if teleported far
-      // Determine if animation suggests grounded (idle or running)
-      const animSrc = bPosData && bPosData.animation ? bPosData : aPosData;
-      const animKey = (animSrc && animSrc.animation) || "";
-      const looksGrounded =
-        /(?:^|-)idle$/.test(animKey) || /(?:^|-)running$/.test(animKey);
-      // Factor based on frame delta (keeps feel similar across FPS)
-      const dt = this.game?.loop?.delta || 16.7;
-      const base = 0.18; // smoothing strength
-      const smoothing = 1 - Math.pow(1 - base, dt / 16.7);
-      const closeEpsilon = 25; // if within this many px, snap to avoid hover
-      const closeEnough =
-        Math.abs(dy) <= closeEpsilon && Math.abs(dx) <= closeEpsilon;
-      if (distSq > maxSnapDistSq || closeEnough || looksGrounded) {
-        // Snap when teleporting, when very close, or when grounded animation indicates landing
-        spr.x = targetX;
-        spr.y = targetY;
-      } else {
-        spr.x += dx * smoothing;
-        spr.y += dy * smoothing;
-      }
+      // Direct snap to interpolated position (adaptive delay already smoothing jitter)
+      spr.x = targetX;
+      spr.y = targetY;
 
-      // Orientation/animation: take from newer if present
+      // Orientation/animation: take from newer if present (prefer b then a)
+      const animSrc = bPosData && bPosData.animation ? bPosData : aPosData;
       if (animSrc) {
         const prevFlip = spr.flipX;
         spr.flipX = !!animSrc.flip;
@@ -863,7 +997,7 @@ const config = {
   backgroundColor: "rgba(0,0,0,0)",
   // Pixel-art friendly settings
   pixelArt: true,
-  roundPixels: true,
+  roundPixels: false, // allow subpixel rendering for smoother interpolation (adaptive timeline)
   antialias: false,
   resolution: window.devicePixelRatio,
   scale: {
