@@ -1,53 +1,34 @@
 // Minimal singleton Socket.IO client (bundled)
 import { io } from "socket.io-client";
 
-// We defer connecting until ensureSocketConnected() is called so that
-// any initial HTTP requests (/status, /partydata, etc.) have a chance
-// to create/set the signed identity cookies first (avoids a race where
-// the websocket handshake occurs before the guest/user cookies exist).
-const socket = io({
-  withCredentials: true,
-  autoConnect: false,
-});
-
-let _connectingPromise = null;
-let _connectAttempted = false;
+// Use normal autoConnect so matchmaking/game listeners work immediately.
+// Party code can optionally await ensureSocketConnected() if it wants to
+// guarantee the handshake finished after /status completed.
+const socket = io({ withCredentials: true, autoConnect: true });
 
 /**
- * Ensure the singleton socket is connected exactly once.
- * Safe to call multiple times; subsequent calls return the same promise
- * (or an already-resolved promise if connected).
+ * Lightweight helper: resolves when socket is connected (or immediately if already).
+ * Does NOT change autoConnect behavior; just a convenience for party.js to avoid races.
+ * An optional timeout ensures the promise resolves even if connect is slow.
  */
-export function ensureSocketConnected() {
+export function ensureSocketConnected(timeoutMs = 4000) {
   if (socket.connected) return Promise.resolve(socket);
-  if (_connectingPromise) return _connectingPromise;
-
-  _connectingPromise = new Promise((resolve, reject) => {
-    const onConnect = () => {
-      cleanup();
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      socket.off("connect", finish);
       resolve(socket);
     };
-    const onError = (err) => {
-      cleanup();
-      // Allow retries on next call
-      _connectingPromise = null;
-      reject(err);
-    };
-    const cleanup = () => {
-      socket.off("connect", onConnect);
-      socket.off("connect_error", onError);
-    };
-
-    if (!_connectAttempted) {
-      _connectAttempted = true;
-      // Start the actual connection attempt
-      socket.connect();
-    }
-    socket.once("connect", onConnect);
-    socket.once("connect_error", onError);
+    socket.once("connect", finish);
+    // Fallback: resolve anyway after timeout so callers proceed.
+    setTimeout(finish, timeoutMs);
+    // If autoConnect was somehow disabled elsewhere, trigger connect.
+    try {
+      if (!socket.active) socket.connect();
+    } catch (_) {}
   });
-
-  return _connectingPromise;
 }
 
 export default socket;

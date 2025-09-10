@@ -164,7 +164,6 @@ function setupGameEventListeners() {
   // Game start countdown
   socket.on("game:start", (data) => {
     console.log("Game starting:", data);
-    
   });
 
   // Server snapshots for interpolation
@@ -298,6 +297,16 @@ function setupGameEventListeners() {
     console.log("Player disconnected:", data);
     // Handle player disconnection in UI
   });
+
+  // Game over event (team elimination)
+  socket.on("game:over", (payload) => {
+    if (gameEnded) return; // idempotent
+    gameEnded = true;
+    try {
+      player && player.body && (player.body.enable = false);
+    } catch (_) {}
+    showGameOverScreen(payload);
+  });
 }
 
 // Initialize players based on server data
@@ -340,7 +349,6 @@ function initializePlayers(players) {
   });
 }
 
-
 // Initialize game when page loads
 document.addEventListener("DOMContentLoaded", initializeGame);
 
@@ -355,11 +363,6 @@ class GameScene extends Phaser.Scene {
     // Character assets (preload all registered characters)
     preloadAll(this, staticPath);
 
-    this.load.atlas(
-      "troll",
-      `${staticPath}/troll_spritesheet.png`,
-      `${staticPath}/troll.json`
-    );
     this.load.image("tiles-image", `${staticPath}/map.png`);
     this.load.tilemapTiledJSON("tiles", `${staticPath}/tilesheet.json`);
     this.load.image("lushy-base", `${staticPath}/lushy/base.png`);
@@ -835,3 +838,36 @@ const config = {
 const game = new Phaser.Game(config);
 
 export { opponentPlayers, teamPlayers };
+
+// -----------------------------
+// Simple Game Over Overlay
+// -----------------------------
+function showGameOverScreen(payload) {
+  const existing = document.getElementById("game-over-overlay");
+  if (existing) existing.remove();
+  const div = document.createElement("div");
+  div.id = "game-over-overlay";
+  const winner = payload?.winnerTeam;
+  let heading = "Game Over";
+  if (winner === null) heading = "Draw";
+  else if (winner === gameData?.yourTeam) heading = "Victory";
+  else heading = "Defeat";
+  div.innerHTML = `
+    <div style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:9999;background:rgba(0,0,0,0.65);font-family:Arial,sans-serif;">
+      <div style="background:#111;padding:32px 48px;border:2px solid #444;border-radius:12px;min-width:320px;text-align:center;box-shadow:0 0 32px rgba(0,0,0,0.6);color:#fff;">
+        <h1 style="margin:0 0 12px;font-size:48px;letter-spacing:2px;${
+          winner === gameData?.yourTeam ? "color:#4ade80;" : ""
+        }${
+    winner && winner !== gameData?.yourTeam ? "color:#ef4444;" : ""
+  }">${heading}</h1>
+        <p style="margin:0 0 20px;font-size:16px;opacity:0.8;">Match ${
+          payload?.matchId ?? ""
+        }</p>
+        <button id="go-lobby" style="background:#2563eb;color:#fff;font-size:16px;padding:10px 22px;border:none;border-radius:6px;cursor:pointer;">Return to Lobby</button>
+      </div>
+    </div>`;
+  document.body.appendChild(div);
+  document.getElementById("go-lobby").addEventListener("click", () => {
+    window.location.href = "/";
+  });
+}

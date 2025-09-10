@@ -30,7 +30,7 @@ class GameRoom {
     // Health/regen tuning (simple, readable constants)
     this.REGEN_DELAY_MS = 3500; // idle time before regen starts
     this.REGEN_TICK_MS = 1500; // heal every 1.5 seconds in discrete ticks
-    this.REGEN_MISSING_RATIO = 0.12; // heal 12% of missing health each tick (regressive)
+    this.REGEN_MISSING_RATIO = 0.30; // heal 30% of missing health each tick (regressive)
     this.REGEN_MIN_ABS = 500; // absolute minimum heal per tick (fixed amount, not percent)
     this.REGEN_BROADCAST_MIN_MS = 120; // avoid spamming health-update too fast
 
@@ -604,6 +604,15 @@ class GameRoom {
             username: target.name,
             gameId: this.matchId,
           });
+          // After a death, check victory conditions
+          try {
+            this._checkVictoryCondition();
+          } catch (e) {
+            console.warn(
+              `[GameRoom ${this.matchId}] victory check failed`,
+              e?.message
+            );
+          }
         }
       }
     } catch (e) {
@@ -734,6 +743,77 @@ class GameRoom {
     } catch (e) {
       console.warn(`[GameRoom ${this.matchId}] handleHeal error:`, e?.message);
     }
+  }
+
+  /**
+   * Evaluate whether one team has been fully eliminated and finish the game if so.
+   */
+  _checkVictoryCondition() {
+    if (this.status !== "active") return; // only during active play
+    const aliveByTeam = { team1: 0, team2: 0 };
+    for (const p of this.players.values()) {
+      if (p.isAlive) {
+        if (p.team === "team1") aliveByTeam.team1++;
+        else if (p.team === "team2") aliveByTeam.team2++;
+      }
+    }
+    const t1Alive = aliveByTeam.team1;
+    const t2Alive = aliveByTeam.team2;
+    let winner = null;
+    if (t1Alive === 0 && t2Alive === 0) {
+      // Simultaneous elimination -> draw (null winner)
+      winner = null;
+    } else if (t1Alive === 0) {
+      winner = "team2";
+    } else if (t2Alive === 0) {
+      winner = "team1";
+    }
+    if (winner !== null || (t1Alive === 0 && t2Alive === 0)) {
+      this._finishGame(winner, { t1Alive, t2Alive });
+    }
+  }
+
+  /**
+   * Finish game, update DB, broadcast game over, and cleanup loop.
+   * @param {string|null} winnerTeam null means draw
+   */
+  async _finishGame(winnerTeam, meta = {}) {
+    if (this.status === "finished") return; // idempotent
+    this.status = "finished";
+    console.log(
+      `[GameRoom ${this.matchId}] Game finished. Winner: ${
+        winnerTeam || "draw"
+      }`
+    );
+    // Stop loop
+    if (this.gameLoop) {
+      clearInterval(this.gameLoop);
+      this.gameLoop = null;
+    }
+    // Persist match completion (best-effort)
+    try {
+      await this.db.runQuery(
+        "UPDATE matches SET status = 'completed' WHERE match_id = ?",
+        [this.matchId]
+      );
+    } catch (e) {
+      console.warn(
+        `[GameRoom ${this.matchId}] failed to update match status`,
+        e?.message
+      );
+    }
+    // Broadcast game over event to clients
+    this.io.to(`game:${this.matchId}`).emit("game:over", {
+      matchId: this.matchId,
+      winnerTeam: winnerTeam, // may be null for draw
+      meta,
+    });
+    // Optional: schedule room cleanup later (allow clients to show UI)
+    setTimeout(() => {
+      try {
+        this.cleanup();
+      } catch (_) {}
+    }, 15000); // 15s grace
   }
 }
 
