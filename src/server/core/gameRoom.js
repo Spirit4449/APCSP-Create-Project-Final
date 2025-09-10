@@ -21,16 +21,16 @@ class GameRoom {
     this.players = new Map(); // socketId -> playerData
     this.gameState = null;
 
-  // Game loop (will migrate to fixed-step accumulator + snapshot cadence)
-  this.gameLoop = null; // legacy interval reference (used only until refactor start)
-  this._loopRunning = false;
-  this._tickId = 0; // monotonically increasing per 60Hz tick
-  this._lastSnapshotMono = 0;
-  this._snapshotIntervals = []; // diagnostics (ms spacing between snapshots)
-  this._diagLastLogMono = 0;
-  this.FIXED_DT_MS = 1000 / 60; // 60 Hz fixed step
-  this.SNAPSHOT_EVERY_TICKS = 3; // 60/3 = 20 Hz snapshots
-  this.DEV_TIMING_DIAG = true; // temporary diagnostics flag
+    // Game loop (will migrate to fixed-step accumulator + snapshot cadence)
+    this.gameLoop = null; // legacy interval reference (used only until refactor start)
+    this._loopRunning = false;
+    this._tickId = 0; // monotonically increasing per 60Hz tick
+    this._lastSnapshotMono = 0;
+    this._snapshotIntervals = []; // diagnostics (ms spacing between snapshots)
+    this._diagLastLogMono = 0;
+    this.FIXED_DT_MS = 1000 / 60; // 60 Hz fixed step
+    this.SNAPSHOT_EVERY_TICKS = 3; // 60/3 = 20 Hz snapshots
+    this.DEV_TIMING_DIAG = true; // temporary diagnostics flag
 
     // Health/regen tuning (simple, readable constants)
     this.REGEN_DELAY_MS = 3500; // idle time before regen starts
@@ -297,8 +297,9 @@ class GameRoom {
     if (this._loopRunning) return; // already running
     console.log(`[GameRoom ${this.matchId}] Fixed-step loop started`);
     this._loopRunning = true;
-    const perf = (typeof performance !== 'undefined' && performance) || null;
-    const monoNow = () => (perf && typeof perf.now === 'function' ? perf.now() : Date.now());
+    const perf = (typeof performance !== "undefined" && performance) || null;
+    const monoNow = () =>
+      perf && typeof perf.now === "function" ? perf.now() : Date.now();
     let lastMono = monoNow();
     let acc = 0;
 
@@ -342,12 +343,22 @@ class GameRoom {
       sentAtWallMs: wall,
     });
     if (this.DEV_TIMING_DIAG) {
-      if (snapMono - this._diagLastLogMono >= 1000 && this._snapshotIntervals.length) {
+      if (
+        snapMono - this._diagLastLogMono >= 1000 &&
+        this._snapshotIntervals.length
+      ) {
         const arr = this._snapshotIntervals.slice(-60);
-        const avg = arr.reduce((a,b)=>a+b,0) / arr.length;
-        const variance = arr.reduce((a,b)=>a+Math.pow(b-avg,2),0)/arr.length;
+        const avg = arr.reduce((a, b) => a + b, 0) / arr.length;
+        const variance =
+          arr.reduce((a, b) => a + Math.pow(b - avg, 2), 0) / arr.length;
         const stdev = Math.sqrt(variance);
-        console.log(`[GameRoom ${this.matchId}] timing tickId=${this._tickId} avgSpacing=${avg.toFixed(2)}ms stdev=${stdev.toFixed(2)}ms samples=${arr.length}`);
+        console.log(
+          `[GameRoom ${this.matchId}] timing tickId=${
+            this._tickId
+          } avgSpacing=${avg.toFixed(2)}ms stdev=${stdev.toFixed(
+            2
+          )}ms samples=${arr.length}`
+        );
         this._diagLastLogMono = snapMono;
       }
     }
@@ -535,7 +546,10 @@ class GameRoom {
     }
 
     // Disable compression for frequent movement messages to reduce latency
-  this.io.to(`game:${this.matchId}`).compress(false).emit("game:snapshot", snapshot);
+    this.io
+      .to(`game:${this.matchId}`)
+      .compress(false)
+      .emit("game:snapshot", snapshot);
   }
 
   /**
@@ -544,8 +558,11 @@ class GameRoom {
   cleanup() {
     // Stop fixed-step loop
     this._loopRunning = false;
-    if (this.gameLoop) { // legacy interval if still allocated
-      try { clearInterval(this.gameLoop); } catch(_) {}
+    if (this.gameLoop) {
+      // legacy interval if still allocated
+      try {
+        clearInterval(this.gameLoop);
+      } catch (_) {}
       this.gameLoop = null;
     }
 
@@ -831,9 +848,14 @@ class GameRoom {
         winnerTeam || "draw"
       }`
     );
-  // Stop loop
-  this._loopRunning = false;
-  if (this.gameLoop) { try { clearInterval(this.gameLoop); } catch(_) {} this.gameLoop = null; }
+    // Stop loop
+    this._loopRunning = false;
+    if (this.gameLoop) {
+      try {
+        clearInterval(this.gameLoop);
+      } catch (_) {}
+      this.gameLoop = null;
+    }
     // Persist match completion (best-effort)
     try {
       await this.db.runQuery(
