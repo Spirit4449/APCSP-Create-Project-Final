@@ -4,7 +4,13 @@ import { io } from "socket.io-client";
 // Use normal autoConnect so matchmaking/game listeners work immediately.
 // Party code can optionally await ensureSocketConnected() if it wants to
 // guarantee the handshake finished after /status completed.
-const socket = io({ withCredentials: true, autoConnect: true });
+const socket = io({
+  withCredentials: true,
+  autoConnect: true,
+  transports: ["websocket"],
+  upgrade: false,
+  forceNew: false,
+});
 
 /**
  * Lightweight helper: resolves when socket is connected (or immediately if already).

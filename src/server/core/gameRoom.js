@@ -21,11 +21,16 @@ class GameRoom {
     this.players = new Map(); // socketId -> playerData
     this.gameState = null;
 
-    // Game loop
-    this.gameLoop = null;
-    this.tickRate = 60; // 60 FPS server tick rate
-    this.broadcastRate = 20; // 20 Hz snapshot broadcast rate for lower latency
-    this.lastBroadcast = 0;
+  // Game loop (will migrate to fixed-step accumulator + snapshot cadence)
+  this.gameLoop = null; // legacy interval reference (used only until refactor start)
+  this._loopRunning = false;
+  this._tickId = 0; // monotonically increasing per 60Hz tick
+  this._lastSnapshotMono = 0;
+  this._snapshotIntervals = []; // diagnostics (ms spacing between snapshots)
+  this._diagLastLogMono = 0;
+  this.FIXED_DT_MS = 1000 / 60; // 60 Hz fixed step
+  this.SNAPSHOT_EVERY_TICKS = 3; // 60/3 = 20 Hz snapshots
+  this.DEV_TIMING_DIAG = true; // temporary diagnostics flag
 
     // Health/regen tuning (simple, readable constants)
     this.REGEN_DELAY_MS = 3500; // idle time before regen starts
@@ -289,26 +294,63 @@ class GameRoom {
    * Start the server game loop
    */
   startGameLoop() {
-    console.log(`[GameRoom ${this.matchId}] Game loop started`);
+    if (this._loopRunning) return; // already running
+    console.log(`[GameRoom ${this.matchId}] Fixed-step loop started`);
+    this._loopRunning = true;
+    const perf = (typeof performance !== 'undefined' && performance) || null;
+    const monoNow = () => (perf && typeof perf.now === 'function' ? perf.now() : Date.now());
+    let lastMono = monoNow();
+    let acc = 0;
 
-    const tickInterval = 1000 / this.tickRate;
-    const broadcastInterval = 1000 / this.broadcastRate;
-
-    this.gameLoop = setInterval(() => {
-      const now = Date.now();
-
-      // Process game tick (physics, collisions, etc.)
+    const step = (currentMono) => {
+      this._tickId++;
       this.processTick();
-
-      // Passive health regeneration after inactivity (attacking or being attacked resets)
       this.processRegen();
-
-      // Broadcast state snapshots to clients
-      if (now - this.lastBroadcast >= broadcastInterval) {
-        this.broadcastSnapshot();
-        this.lastBroadcast = now;
+      // Snapshot cadence: deterministic every N ticks
+      if (this._tickId % this.SNAPSHOT_EVERY_TICKS === 0) {
+        this._emitSnapshotWithTiming(currentMono);
       }
-    }, tickInterval);
+    };
+
+    const loop = () => {
+      if (!this._loopRunning) return;
+      const nowMono = monoNow();
+      let delta = nowMono - lastMono;
+      if (delta < 0) delta = 0; // guard
+      if (delta > 1000) delta = 1000; // clamp huge pause (avoid spiral)
+      lastMono = nowMono;
+      acc += delta;
+      while (acc >= this.FIXED_DT_MS) {
+        step(nowMono);
+        acc -= this.FIXED_DT_MS;
+      }
+      setImmediate(loop);
+    };
+    setImmediate(loop);
+  }
+
+  _emitSnapshotWithTiming(snapMono) {
+    const wall = Date.now();
+    if (this._lastSnapshotMono > 0) {
+      const spacing = snapMono - this._lastSnapshotMono;
+      if (spacing >= 0) this._snapshotIntervals.push(spacing);
+    }
+    this._lastSnapshotMono = snapMono;
+    this.broadcastSnapshot({
+      tickId: this._tickId,
+      tMono: snapMono,
+      sentAtWallMs: wall,
+    });
+    if (this.DEV_TIMING_DIAG) {
+      if (snapMono - this._diagLastLogMono >= 1000 && this._snapshotIntervals.length) {
+        const arr = this._snapshotIntervals.slice(-60);
+        const avg = arr.reduce((a,b)=>a+b,0) / arr.length;
+        const variance = arr.reduce((a,b)=>a+Math.pow(b-avg,2),0)/arr.length;
+        const stdev = Math.sqrt(variance);
+        console.log(`[GameRoom ${this.matchId}] timing tickId=${this._tickId} avgSpacing=${avg.toFixed(2)}ms stdev=${stdev.toFixed(2)}ms samples=${arr.length}`);
+        this._diagLastLogMono = snapMono;
+      }
+    }
   }
 
   /**
@@ -469,11 +511,16 @@ class GameRoom {
   /**
    * Broadcast game state snapshot to all players
    */
-  broadcastSnapshot() {
+  broadcastSnapshot(extraTiming = null) {
     const snapshot = {
-      timestamp: Date.now(),
+      timestamp: Date.now(), // legacy field for existing clients
       players: {},
     };
+    if (extraTiming) {
+      snapshot.tickId = extraTiming.tickId;
+      snapshot.tMono = extraTiming.tMono;
+      snapshot.sentAtWallMs = extraTiming.sentAtWallMs;
+    }
 
     // Build snapshot of all player positions
     for (const playerData of this.players.values()) {
@@ -488,18 +535,17 @@ class GameRoom {
     }
 
     // Disable compression for frequent movement messages to reduce latency
-    this.io
-      .to(`game:${this.matchId}`)
-      .compress(false)
-      .emit("game:snapshot", snapshot);
+  this.io.to(`game:${this.matchId}`).compress(false).emit("game:snapshot", snapshot);
   }
 
   /**
    * Clean up room resources
    */
   cleanup() {
-    if (this.gameLoop) {
-      clearInterval(this.gameLoop);
+    // Stop fixed-step loop
+    this._loopRunning = false;
+    if (this.gameLoop) { // legacy interval if still allocated
+      try { clearInterval(this.gameLoop); } catch(_) {}
       this.gameLoop = null;
     }
 
@@ -785,11 +831,9 @@ class GameRoom {
         winnerTeam || "draw"
       }`
     );
-    // Stop loop
-    if (this.gameLoop) {
-      clearInterval(this.gameLoop);
-      this.gameLoop = null;
-    }
+  // Stop loop
+  this._loopRunning = false;
+  if (this.gameLoop) { try { clearInterval(this.gameLoop); } catch(_) {} this.gameLoop = null; }
     // Persist match completion (best-effort)
     try {
       await this.db.runQuery(

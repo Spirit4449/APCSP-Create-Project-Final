@@ -79,11 +79,16 @@ let lastPlayerState = { x: 0, y: 0, flip: false, animation: null };
 
 // Server snapshot interpolation
 let stateActive = false; // set true once we start receiving server snapshots
-const stateBuffer = []; // queue of { t, players: { [username]: {x,y,flip,animation} } }
-const MAX_STATE_BUFFER = 60; // ~4 seconds at 15 Hz
-let interpDelayMs = 120; // lower delay for more responsiveness; increase if jittery
-let clockOffsetMs = 0; // serverTime - clientTime estimate; helps when device clock is off
-let clockCalibrated = false;
+const stateBuffer = []; // queue of { tMono, tickId, players: { [username]: {...} } }
+const MAX_STATE_BUFFER = 120; // cushion (~6s at 20 Hz) for safety
+let interpDelayMs = 150; // slightly larger to absorb jitter (will tune later)
+// Monotonic timing alignment
+let serverMonoOffset = 0; // server tMono - client performance.now()
+let monoCalibrated = false;
+const SNAP_INTERVAL_MS = 50; // 20 Hz cadence from server
+// Diagnostics
+let snapshotSpacings = []; // recent spacing deltas
+let lastDiagLogMono = 0;
 
 // Game scene reference
 let gameScene = null;
@@ -168,24 +173,43 @@ function setupGameEventListeners() {
 
   // Server snapshots for interpolation
   socket.on("game:snapshot", (snapshot) => {
+    if (!snapshot || !snapshot.players) return;
     if (!stateActive) {
       stateActive = true;
-      console.log("Started receiving server snapshots");
+      console.log("Started receiving server snapshots (tMono/tickId enabled)");
     }
 
-    // Estimate server-client clock offset on first snapshot
+    // Calibrate monotonic offset using performance.now() vs server tMono
     try {
-      if (
-        !clockCalibrated &&
-        snapshot &&
-        typeof snapshot.timestamp === "number"
-      ) {
-        // serverTime - clientNow
-        clockOffsetMs = snapshot.timestamp - Date.now();
-        clockCalibrated = true;
-        console.log("Clock offset calibrated (ms):", clockOffsetMs);
+      const clientMonoNow = performance.now();
+      if (!monoCalibrated && typeof snapshot.tMono === "number") {
+        serverMonoOffset = snapshot.tMono - clientMonoNow; // server = client + offset
+        monoCalibrated = true;
+        console.log("Monotonic offset calibrated (ms):", serverMonoOffset.toFixed(2));
       }
     } catch (_) {}
+
+    // Derive monotonic time for snapshot (fallbacks if missing)
+    let snapMono = null;
+    if (typeof snapshot.tMono === "number") {
+      snapMono = snapshot.tMono;
+    } else if (typeof snapshot.timestamp === "number") {
+      // Fallback: treat legacy timestamp as wall ms, convert using offset if calibrated
+      const clientMonoNow = performance.now();
+      snapMono = monoCalibrated
+        ? clientMonoNow + serverMonoOffset // approximate current server mono
+        : snapshot.timestamp; // best effort
+    } else {
+      snapMono = (performance.now && performance.now()) || Date.now();
+    }
+
+    // Track spacing diagnostics
+    if (stateBuffer.length > 0) {
+      const prev = stateBuffer[stateBuffer.length - 1].tMono;
+      const d = snapMono - prev;
+      if (d >= 0 && d < 500) snapshotSpacings.push(d);
+      if (snapshotSpacings.length > 400) snapshotSpacings.splice(0, 200);
+    }
 
     // Late-join safety: create opponents on first snapshot if missing
     try {
@@ -215,9 +239,10 @@ function setupGameEventListeners() {
       }
     } catch (_) {}
 
-    // Add to state buffer for interpolation
+    // Add to state buffer for interpolation using server monotonic timeline
     stateBuffer.push({
-      t: snapshot.timestamp,
+      tMono: snapMono,
+      tickId: typeof snapshot.tickId === "number" ? snapshot.tickId : null,
       players: snapshot.players,
     });
 
@@ -225,6 +250,19 @@ function setupGameEventListeners() {
     if (stateBuffer.length > MAX_STATE_BUFFER) {
       stateBuffer.shift();
     }
+
+    // Periodic diagnostics (every ~4s) about snapshot spacing
+    try {
+      const cm = performance.now();
+      if (cm - lastDiagLogMono > 4000 && snapshotSpacings.length > 5) {
+        const arr = snapshotSpacings.slice(-80);
+        const avg = arr.reduce((a,b)=>a+b,0)/arr.length;
+        const variance = arr.reduce((a,b)=>a+Math.pow(b-avg,2),0)/arr.length;
+        const stdev = Math.sqrt(variance);
+        console.log(`[interp] snapshots avg=${avg.toFixed(2)}ms sd=${stdev.toFixed(2)}ms n=${arr.length}`);
+        lastDiagLogMono = cm;
+      }
+    } catch(_) {}
   });
 
   // Game actions from other players
@@ -670,39 +708,40 @@ class GameScene extends Phaser.Scene {
 
     // Server state interpolation
     if (stateActive && stateBuffer.length > 0) {
-      const now = Date.now();
-      // Use server-time basis if we calibrated; otherwise client-time
-      const renderTime =
-        now + (clockCalibrated ? clockOffsetMs : 0) - interpDelayMs;
+      const clientNowMono = performance.now();
+      // Build render target time in server monotonic domain
+      const rawRenderTarget = monoCalibrated
+        ? clientNowMono + serverMonoOffset - interpDelayMs
+        : stateBuffer[stateBuffer.length - 1].tMono - 5; // fallback: trail latest slightly
+      // Quantize to stable 50ms grid to prevent jitter in alpha
+      const renderTarget = Math.round(rawRenderTarget / SNAP_INTERVAL_MS) * SNAP_INTERVAL_MS;
 
-      // Find the two snapshots to interpolate between
+      // Locate surrounding snapshots
       let aState = null;
       let bState = null;
-
       for (let i = 0; i < stateBuffer.length - 1; i++) {
-        if (
-          stateBuffer[i].t <= renderTime &&
-          renderTime <= stateBuffer[i + 1].t
-        ) {
-          aState = stateBuffer[i];
-          bState = stateBuffer[i + 1];
+        const a = stateBuffer[i];
+        const b = stateBuffer[i + 1];
+        if (a.tMono <= renderTarget && renderTarget <= b.tMono) {
+          aState = a;
+          bState = b;
           break;
         }
       }
 
-      // If we have valid states, interpolate
       if (aState && bState) {
-        const alpha = (renderTime - aState.t) / (bState.t - aState.t);
+        const span = bState.tMono - aState.tMono;
+        let alpha = span > 0 ? (renderTarget - aState.tMono) / span : 1;
+        if (alpha < 0) alpha = 0; else if (alpha > 1) alpha = 1;
         this.interpolatePlayerStates(aState, bState, alpha);
       } else {
-        // Fallbacks for clock skew or low buffer: snap to most recent
+        // Fallbacks
         if (stateBuffer.length >= 2) {
           const a = stateBuffer[stateBuffer.length - 2];
           const b = stateBuffer[stateBuffer.length - 1];
           this.interpolatePlayerStates(a, b, 1);
         } else if (stateBuffer.length === 1) {
           const only = stateBuffer[0];
-          // Interpolate with self (alpha=1) effectively snaps to the single state
           this.interpolatePlayerStates(only, only, 1);
         }
       }
