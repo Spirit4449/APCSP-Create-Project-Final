@@ -2,7 +2,6 @@
 const path = require("path");
 const MiniCssExtractPlugin = require("mini-css-extract-plugin");
 const CopyWebpackPlugin = require("copy-webpack-plugin");
-const { BundleAnalyzerPlugin } = require('webpack-bundle-analyzer');
 module.exports = {
   entry: {
     game: "./src/game.js",
@@ -27,14 +26,14 @@ module.exports = {
     },
     historyApiFallback: true,
   },
-    stats: {
-    all: false,          // disable everything
-    errors: true,        // show errors
-    warnings: true,      // show warnings
-    timings: true,       // show build timings
-    builtAt: true,       // show when build happened
-    modules: false,      // hide module info
-    assets: false,        // show output files
+  stats: {
+    all: false, // disable everything
+    errors: true, // show errors
+    warnings: true, // show warnings
+    timings: true, // show build timings
+    builtAt: true, // show when build happened
+    modules: false, // hide module info
+    assets: false, // show output files
   },
   module: {
     rules: [
@@ -76,7 +75,5 @@ module.exports = {
         },
       ],
     }),
-        new BundleAnalyzerPlugin({ analyzerMode: 'server', openAnalyzer: true }),
-
   ],
 };

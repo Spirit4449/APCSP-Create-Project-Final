@@ -514,7 +514,7 @@ function applyMemberToSlot(member, slotId, isYourTeam = null) {
 
   if (spriteEl) {
     const cls = member.char_class || "ninja";
-    spriteEl.src = `/assets/${cls}/body.png`;
+    spriteEl.src = `/assets/${cls}/body.webp`;
     spriteEl.alt = cls;
     spriteEl.classList.remove("random");
     spriteEl.className = "character-sprite";
@@ -967,7 +967,7 @@ function updateMMOverlay({ found, total, mode, map, players }) {
       if (p) {
         const img = document.createElement("img");
         const cls = p.char_class || "ninja";
-        img.src = `/assets/${cls}/body.png`;
+        img.src = `/assets/${cls}/body.webp`;
         img.alt = cls;
         const name = document.createElement("div");
         name.className = "mm-name";

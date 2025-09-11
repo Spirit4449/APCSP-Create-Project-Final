@@ -16,13 +16,10 @@ class Thorg {
     // Load atlas and projectile/sounds
     scene.load.atlas(
       NAME,
-      `${staticPath}/${NAME}/spritesheet.png`,
+      `${staticPath}/${NAME}/spritesheet.webp`,
       `${staticPath}/${NAME}/animations.json`
     );
-    // Optional VFX sprite (place at /assets/thorg/slash.png). Falls back to vector if missing.
-    // scene.load.image("shuriken", `${staticPath}/thorg/shuriken.png`);
-    // scene.load.audio("shurikenThrow", `${staticPath}/thorg/shurikenThrow.mp3`);
-    // scene.load.audio("shurikenHit", `${staticPath}/thorg/hit.mp3`);
+
   }
 
   static setupAnimations(scene) {

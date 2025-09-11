@@ -17,10 +17,10 @@ class Ninja {
     // Load atlas and projectile/sounds
     scene.load.atlas(
       NAME,
-      `${staticPath}/${NAME}/spritesheet.png`,
+      `${staticPath}/${NAME}/spritesheet.webp`,
       `${staticPath}/${NAME}/animations.json`
     );
-    scene.load.image("shuriken", `${staticPath}/${NAME}/shuriken.png`);
+    scene.load.image("shuriken", `${staticPath}/${NAME}/shuriken.webp`);
     scene.load.audio(
       "shurikenThrow",
       `${staticPath}/${NAME}/shurikenThrow.mp3`

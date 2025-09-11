@@ -153,7 +153,7 @@ function createCharacterCard(character, userData) {
   header.className = "character-header";
   const img = document.createElement("img");
   img.className = "character-image";
-  img.src = `/assets/${character}/body.png`;
+  img.src = `/assets/${character}/body.webp`;
   img.alt = character;
   const info = document.createElement("div");
   info.className = "character-info";
@@ -171,7 +171,7 @@ function createCharacterCard(character, userData) {
   // Level badge
   const levelBadge = document.createElement("img");
   levelBadge.className = "level-badge";
-  levelBadge.src = `/assets/levels/${level}.png`;
+  levelBadge.src = `/assets/levels/${level}.webp`;
   levelBadge.alt = `Level ${level}`;
   levelBadge.onerror = function () {
     this.style.display = "none";
@@ -283,7 +283,7 @@ function selectCharacter(character) {
     // Update the main body sprite image immediately
     const mainSprite = document.getElementById("sprite");
     if (mainSprite) {
-      mainSprite.src = `/assets/${charClass}/body.png`;
+      mainSprite.src = `/assets/${charClass}/body.webp`;
       mainSprite.alt = charClass;
       try {
         mainSprite.classList.remove("random");
@@ -297,7 +297,7 @@ function selectCharacter(character) {
     if (yourSlot) {
       const spriteEl = yourSlot.querySelector(".character-sprite");
       if (spriteEl) {
-        spriteEl.src = `/assets/${charClass}/body.png`;
+        spriteEl.src = `/assets/${charClass}/body.webp`;
         spriteEl.alt = charClass;
         spriteEl.classList.remove("random");
       }
@@ -368,7 +368,7 @@ function showConfirmDialog(opts, onConfirm) {
     heroBeams.className = "cs-hero-beams gem"; // gem theme (bluish)
     const heroImg = document.createElement("img");
     heroImg.className = "cs-hero-img";
-    heroImg.src = `/assets/${character}/body.png`;
+    heroImg.src = `/assets/${character}/body.webp`;
     heroImg.alt = character;
     hero.appendChild(heroBeams);
     hero.appendChild(heroImg);
@@ -380,7 +380,7 @@ function showConfirmDialog(opts, onConfirm) {
     levelLine.className = "cs-level-line";
     const currImg = document.createElement("img");
     currImg.className = "cs-level-img";
-    currImg.src = `/assets/levels/${level}.png`;
+    currImg.src = `/assets/levels/${level}.webp`;
     currImg.alt = `Level ${level}`;
     const arrow = document.createElement("img");
     arrow.className = "cs-arrow";
@@ -392,7 +392,7 @@ function showConfirmDialog(opts, onConfirm) {
     beams.className = "cs-beams coin"; // coin theme (golden rays)
     const nextImg = document.createElement("img");
     nextImg.className = "cs-next-badge";
-    nextImg.src = `/assets/levels/${Math.min(level + 1, LEVEL_CAP)}.png`;
+    nextImg.src = `/assets/levels/${Math.min(level + 1, LEVEL_CAP)}.webp`;
     nextImg.alt = `Level ${Math.min(level + 1, LEVEL_CAP)}`;
     nextWrap.appendChild(beams);
     nextWrap.appendChild(nextImg);

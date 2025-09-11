@@ -1,6 +1,5 @@
 // game.js
 
-import Phaser from "phaser";
 import {
   lushyPeaks,
   lushyPeaksObjects,
@@ -450,34 +449,34 @@ class GameScene extends Phaser.Scene {
     // Character assets (preload all registered characters)
     preloadAll(this, staticPath);
 
-    this.load.image("tiles-image", `${staticPath}/map.png`);
+    this.load.image("tiles-image", `${staticPath}/map.webp`);
     this.load.tilemapTiledJSON("tiles", `${staticPath}/tilesheet.json`);
-    this.load.image("lushy-base", `${staticPath}/lushy/base.png`);
-    this.load.image("lushy-platform", `${staticPath}/lushy/largePlatform.png`);
+    this.load.image("lushy-base", `${staticPath}/lushy/base.webp`);
+    this.load.image("lushy-platform", `${staticPath}/lushy/largePlatform.webp`);
     this.load.image(
       "lushy-side-platform",
-      `${staticPath}/lushy/sidePlatform.png`
+      `${staticPath}/lushy/sidePlatform.webp`
     );
     this.load.image(
       "mangrove-tiny-platform",
-      `${staticPath}/mangrove/tinyPlatform.png`
+      `${staticPath}/mangrove/tinyPlatform.webp`
     );
     this.load.image(
       "mangrove-base-left",
-      `${staticPath}/mangrove/baseLeft.png`
+      `${staticPath}/mangrove/baseLeft.webp`
     );
     this.load.image(
       "mangrove-base-middle",
-      `${staticPath}/mangrove/baseMiddle.png`
+      `${staticPath}/mangrove/baseMiddle.webp`
     );
     this.load.image(
       "mangrove-base-right",
-      `${staticPath}/mangrove/baseRight.png`
+      `${staticPath}/mangrove/baseRight.webp`
     );
-    this.load.image("mangrove-base-top", `${staticPath}/mangrove/baseTop.png`);
-    this.load.image("thorg-weapon", `${staticPath}/thorg/weapon.png`);
+    this.load.image("mangrove-base-top", `${staticPath}/mangrove/baseTop.webp`);
+    this.load.image("thorg-weapon", `${staticPath}/thorg/weapon.webp`);
     // Movement SFX (place files under /assets/audio)
-    this.load.audio("sfx-step", `${staticPath}/step.ogg`);
+    this.load.audio("sfx-step", `${staticPath}/step.mp3`);
     this.load.audio("sfx-jump", `${staticPath}/jump.mp3`);
     this.load.audio("sfx-land", `${staticPath}/land.mp3`);
     this.load.audio("sfx-walljump", `${staticPath}/walljump.mp3`);
@@ -487,7 +486,7 @@ class GameScene extends Phaser.Scene {
     // Music (non-looping bgm, separate win/lose stingers)
     this.load.audio("main", `${staticPath}/main.mp3`);
     this.load.audio("win", `${staticPath}/win.mp3`);
-    this.load.audio("lose", `${staticPath}/lose.wav`);
+    this.load.audio("lose", `${staticPath}/lose.mp3`);
   }
 
   create() {

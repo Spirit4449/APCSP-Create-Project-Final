@@ -136,7 +136,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   document.getElementById("username-text").textContent = userData.name;
   setLobbyBackground("1");
-  characterBodyElement.src = `/assets/${userData.char_class}/body.png`;
+  characterBodyElement.src = `/assets/${userData.char_class}/body.webp`;
   // Ensure non-random styling on initial sprite
   try {
     characterBodyElement.classList.remove("random");

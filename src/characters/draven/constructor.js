@@ -20,13 +20,13 @@ class draven {
     // Load atlas and projectile/sounds
     scene.load.atlas(
       NAME,
-      `${staticPath}/${NAME}/spritesheet.png`,
+      `${staticPath}/${NAME}/spritesheet.webp`,
       `${staticPath}/${NAME}/animations.json`
     );
     // Explosion atlas (separate) for splash attack visual
     scene.load.atlas(
       `${NAME}-explosion`,
-      `${staticPath}/${NAME}/explosion.png`,
+      `${staticPath}/${NAME}/explosion.webp`,
       `${staticPath}/${NAME}/explosion.json`
     );
     // Fireball / splash SFX
