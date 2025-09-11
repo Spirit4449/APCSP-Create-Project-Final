@@ -9,6 +9,7 @@ import {
   showMatchmakingOverlay,
   initReadyToggle,
 } from "./party.js";
+import { ensureSocketConnected } from "./socket.js";
 import {
   initializeCharacterSelect,
   openCharacterSelect,
@@ -166,7 +167,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   initializeModeDropdown(); // Initialize mode dropdown functionality for both party and lobby
 
   // Initialize socket events for both party and solo flows once DOM is ready
-  socketInit();
 
   if (existingPartyId) {
     createPartyButton.textContent = "Leave Party";
@@ -235,6 +235,17 @@ document.addEventListener("DOMContentLoaded", async () => {
       initReadyToggle();
     } catch {}
   }
+});
+
+document.addEventListener("DOMContentLoaded", async () => {
+  await statusPromise; // ensures guest user created + cookies set
+  // NEW: connect socket now, deterministically after cookies are present
+  try {
+    if (!ensureSocketConnected()) await waitForConnect();
+  } catch {}
+  if (!userData) return;
+
+  socketInit(); // this can assume socket is connected or connecting with cookies
 });
 
 function signUpOut(guest) {

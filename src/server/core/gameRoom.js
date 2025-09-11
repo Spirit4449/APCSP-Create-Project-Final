@@ -259,14 +259,14 @@ class GameRoom {
   initializeSpawnPositions() {
     const spawnPositions = {
       team1: [
-        { x: 200, y: 300 },
-        { x: 250, y: 300 },
-        { x: 300, y: 300 },
+        { x: -100 , y: -100 },
+        { x: -100 , y: -100 },
+        { x: -100 , y: -100 },
       ],
       team2: [
-        { x: 800, y: 300 },
-        { x: 850, y: 300 },
-        { x: 900, y: 300 },
+        { x: -100 , y: -100 },
+        { x: -100 , y: -100 },
+        { x: -100 , y: -100 },
       ],
     };
 

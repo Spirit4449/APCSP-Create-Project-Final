@@ -267,24 +267,47 @@ function initSocket({ io, COOKIE_SECRET, db }) {
       }
     });
 
-    // Game room events
-    socket.on("game:join", async (data) => {
+    // REPLACE all existing `socket.on("game:join", ...)` with this ONE handler
+    socket.on("game:join", async (data, cb) => {
       try {
-        const { matchId } = data;
-        if (!matchId) {
+        const user = socket.data.user;
+        const matchId = Number(data?.matchId);
+
+        if (!user) {
+          cb?.({ ok: false, error: "unauthorized" });
+          socket.emit("game:error", { message: "Unauthorized" });
+          console.warn("[game:join] unauthorized socket", { sid: socket.id });
+          return;
+        }
+        if (!Number.isFinite(matchId) || matchId <= 0) {
+          cb?.({ ok: false, error: "bad_matchId" });
           socket.emit("game:error", { message: "Match ID required" });
+          console.warn("[game:join] bad matchId", { sid: socket.id, data });
           return;
         }
 
-        const success = await gameHub.handlePlayerJoin(socket, Number(matchId));
-        if (!success) {
-          console.warn(
-            `Failed to join game room ${matchId} for ${socket.data.user?.name}`
-          );
+        const ok = await gameHub.handlePlayerJoin(socket, matchId);
+        if (ok) {
+          cb?.({ ok: true, matchId });
+          socket.emit("game:joined", { ok: true, matchId });
+          console.log("[game:join] ok", {
+            sid: socket.id,
+            user: user.name,
+            matchId,
+          });
+        } else {
+          cb?.({ ok: false, error: "join_failed" });
+          socket.emit("game:error", { message: "Failed to join game" });
+          console.warn("[game:join] hub returned false", {
+            sid: socket.id,
+            user: user.name,
+            matchId,
+          });
         }
       } catch (e) {
-        console.warn("game:join error:", e?.message);
+        cb?.({ ok: false, error: "exception" });
         socket.emit("game:error", { message: "Failed to join game" });
+        console.warn("[game:join] error", e?.message);
       }
     });
 
@@ -295,23 +318,6 @@ function initSocket({ io, COOKIE_SECRET, db }) {
 
     socket.on("game:action", (actionData) => {
       // Forward to game room - handled in gameRoom.js
-    });
-
-    // Game-related handlers
-    socket.on("game:join", async ({ matchId }) => {
-      try {
-        const success = await gameHub.handlePlayerJoin(socket, matchId);
-        if (success) {
-          console.log(
-            `[Game] Player ${socket.data.user?.name} joined match ${matchId}`
-          );
-        }
-      } catch (e) {
-        console.warn("game:join error:", e?.message);
-        socket.emit("game:error", {
-          message: e?.message || "Failed to join game",
-        });
-      }
     });
 
     // Proactive offline on tab close/navigation
