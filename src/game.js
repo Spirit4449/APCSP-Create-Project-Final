@@ -456,7 +456,7 @@ class GameScene extends Phaser.Scene {
     this.load.image(
       "lushy-side-platform",
       `${staticPath}/lushy/sidePlatform.webp`
-    );
+    ); 
     this.load.image(
       "mangrove-tiny-platform",
       `${staticPath}/mangrove/tinyPlatform.webp`
@@ -536,6 +536,7 @@ class GameScene extends Phaser.Scene {
           this.bgmMain = this.sound.add("main", {
             volume: 0.02,
             loop: false,
+            preload: false,
           });
         }
         this.bgmMain.play();
