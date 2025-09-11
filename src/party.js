@@ -1,5 +1,5 @@
 import { sonner } from "./lib/sonner.js";
-import socket, { ensureSocketConnected } from "./socket";
+import socket, { ensureSocketConnected, waitForConnect } from "./socket";
 
 // Track last known party roster to detect joins/leaves
 let __partyRosterNames = null; // Set<string> of member names

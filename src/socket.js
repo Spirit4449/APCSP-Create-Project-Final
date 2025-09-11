@@ -6,35 +6,64 @@ import { io } from "socket.io-client";
 // guarantee the handshake finished after /status completed.
 const socket = io({
   withCredentials: true,
-  autoConnect: true,
+  autoConnect: false,
   transports: ["websocket"],
   upgrade: false,
   forceNew: false,
 });
 
-/**
- * Lightweight helper: resolves when socket is connected (or immediately if already).
- * Does NOT change autoConnect behavior; just a convenience for party.js to avoid races.
- * An optional timeout ensures the promise resolves even if connect is slow.
- */
-export function ensureSocketConnected(timeoutMs = 4000) {
-  if (socket.connected) return Promise.resolve(socket);
-  return new Promise((resolve) => {
+// Utility: call this once after /status finishes
+export function ensureSocketConnected() {
+  if (socket.connected || socket.connecting) return;
+  socket.connect();
+}
+
+// Optional: expose a promise for “connected”
+export function waitForConnect(timeoutMs = 10000) {
+  if (socket.connected) return Promise.resolve();
+
+  return new Promise((resolve, reject) => {
     let done = false;
-    const finish = () => {
+
+    const cleanup = () => {
       if (done) return;
       done = true;
-      socket.off("connect", finish);
-      resolve(socket);
+      clearTimeout(t);
+      socket.off("connect", onConnect);
+      socket.off("reconnect", onConnect);
+      socket.off("connect_error", onError);
+      socket.off("reconnect_error", onError);
     };
-    socket.once("connect", finish);
-    // Fallback: resolve anyway after timeout so callers proceed.
-    setTimeout(finish, timeoutMs);
-    // If autoConnect was somehow disabled elsewhere, trigger connect.
-    try {
-      if (!socket.active) socket.connect();
-    } catch (_) {}
+
+    const onConnect = () => {
+      if (done) return;
+      cleanup();
+      resolve();
+    };
+
+    const onError = (err) => {
+      // don’t reject immediately, just log
+      console.warn("[waitForConnect] error", err?.message || err);
+      // we keep listening in case a later reconnect succeeds
+    };
+
+    const t = setTimeout(() => {
+      if (done) return;
+      cleanup();
+      reject(new Error("waitForConnect timeout after " + timeoutMs + "ms"));
+    }, timeoutMs);
+
+    socket.once("connect", onConnect);
+    socket.once("reconnect", onConnect);
+    socket.on("connect_error", onError);
+    socket.on("reconnect_error", onError);
+
+    // Important: if not already connecting, start handshake now
+    if (!socket.connected) socket.connect();
   });
 }
+
+
+
 
 export default socket;

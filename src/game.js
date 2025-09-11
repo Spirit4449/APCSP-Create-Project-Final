@@ -18,7 +18,7 @@ import {
   setupAll,
   resolveAnimKey,
 } from "./characters";
-import socket from "./socket";
+import socket, { waitForConnect } from "./socket";
 import OpPlayer from "./opPlayer";
 import { spawnDust, prewarmDust } from "./effects";
 import { changeDebugState } from "./characters/draven/attack";
@@ -139,9 +139,12 @@ async function initializeGame() {
   try {
     console.log("Fetching game data for match:", matchId);
     gameData = await fetchGameData();
+    console.log("Game data received:", gameData);
     username = gameData.yourName || username;
 
     // 1) Register listeners before join
+    await waitForConnect(4000);
+    console.log("Setting up game listeners")
     setupGameEventListeners();
 
     // 2) Include gameId if your /gamedata returns it
@@ -159,7 +162,7 @@ async function initializeGame() {
 function setupGameEventListeners() {
   // Game initialization
   socket.on("game:init", (gameState) => {
-    console.log("Game initialized:", gameState);
+    console.log("Game initialized:");
     gameInitialized = true;
 
     // Update local game data with server state
