@@ -84,7 +84,7 @@
   "meta": {
     "app": "https://www.leshylabs.com/apps/sstool/",
     "version": "Leshy explosionSheet Tool v0.8.4",
-    "image": "explosionsheet.png",
+    "image": "explosionsheet.webp",
     "size": { "w": 640, "h": 64 },
     "scale": 1
   }

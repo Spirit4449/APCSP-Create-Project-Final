@@ -759,7 +759,7 @@ function createPlatform(team, slotNumber) {
   // Create character sprite
   const sprite = document.createElement("img");
   sprite.className = "character-sprite random";
-  sprite.src = "/assets/random.png";
+  sprite.src = "/assets/random.webp";
   sprite.alt = "Random";
 
   // Create status element with invite functionality
@@ -820,7 +820,7 @@ function resetSlotToRandom(slot) {
   if (!username || !sprite || !statusEl) return;
 
   username.textContent = "Random";
-  sprite.src = "/assets/random.png";
+  sprite.src = "/assets/random.webp";
   sprite.alt = "Random";
   sprite.classList.add("random");
   statusEl.className = "status invite";

@@ -188,7 +188,7 @@ function createCharacterCard(character, userData) {
   const healthSection = document.createElement("div");
   healthSection.className = "stat-section";
   healthSection.innerHTML = `
-    <img src="/assets/heart.png" alt="Health" class="stat-icon" onerror="this.style.display='none'">
+    <img src="/assets/heart.webp" alt="Health" class="stat-icon" onerror="this.style.display='none'">
     <div class="stat-section-title">Health</div>
     <div class="stat-main-value">${currentHealth}</div>
     <div class="stat-bar health-bar"><div class="stat-fill" style="width: ${healthPercent}%"></div></div>`;
@@ -196,7 +196,7 @@ function createCharacterCard(character, userData) {
   const attackSection = document.createElement("div");
   attackSection.className = "stat-section";
   attackSection.innerHTML = `
-    <img src="/assets/attack.png" alt="Attack" class="stat-icon" onerror="this.style.display='none'">
+    <img src="/assets/attack.webp" alt="Attack" class="stat-icon" onerror="this.style.display='none'">
     <div class="stat-section-title">Attack</div>
     <div class="stat-main-value">${currentDamage}</div>
     <div class="stat-bar attack-bar"><div class="stat-fill" style="width: ${damagePercent}%"></div></div>
@@ -207,7 +207,7 @@ function createCharacterCard(character, userData) {
   const specialSection = document.createElement("div");
   specialSection.className = "stat-section";
   specialSection.innerHTML = `
-    <img src="/assets/special.png" alt="Special" class="stat-icon" onerror="this.style.display='none'">
+    <img src="/assets/special.webp" alt="Special" class="stat-icon" onerror="this.style.display='none'">
     <div class="stat-section-title">Special</div>
     <div class="stat-main-value">${currentSpecial}</div>
     <div class="stat-bar special-bar"><div class="stat-fill" style="width: ${specialPercent}%"></div></div>
@@ -222,9 +222,9 @@ function createCharacterCard(character, userData) {
     lockBtn.className = "locked-button";
     const priceHtml =
       typeof price === "number"
-        ? `<span class="button-price"><img class="cs-currency" src="/assets/gem.png" alt=""/> ${price}</span>`
+        ? `<span class="button-price"><img class="cs-currency" src="/assets/gem.webp" alt=""/> ${price}</span>`
         : "";
-    lockBtn.innerHTML = `<img class="lock-icon" src="/assets/lock.png" alt="" onerror="this.style.display='none'"/> <span>Locked</span> ${priceHtml}`;
+    lockBtn.innerHTML = `<img class="lock-icon" src="/assets/lock.webp" alt="" onerror="this.style.display='none'"/> <span>Locked</span> ${priceHtml}`;
     lockBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       showConfirmDialog({ type: "unlock", character, level, price }, () =>
@@ -237,7 +237,7 @@ function createCharacterCard(character, userData) {
     const price = upgradePrice(level);
     const upgradeBtn = document.createElement("button");
     upgradeBtn.className = "upgrade-button gleam";
-    upgradeBtn.innerHTML = `<img class="upgrade-icon" src="/assets/upgrade.png" alt="" onerror="this.style.display='none'"/> <span>Upgrade</span> <span class="button-price"><img class="cs-currency" src="/assets/coin.png" alt=""/> ${price}</span>`;
+    upgradeBtn.innerHTML = `<img class="upgrade-icon" src="/assets/upgrade.webp" alt="" onerror="this.style.display='none'"/> <span>Upgrade</span> <span class="button-price"><img class="cs-currency" src="/assets/coin.webp" alt=""/> ${price}</span>`;
     upgradeBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       showConfirmDialog({ type: "upgrade", character, level, price }, () =>
@@ -384,7 +384,7 @@ function showConfirmDialog(opts, onConfirm) {
     currImg.alt = `Level ${level}`;
     const arrow = document.createElement("img");
     arrow.className = "cs-arrow";
-    arrow.src = "/assets/arrow.png";
+    arrow.src = "/assets/arrow.webp";
     arrow.alt = ">";
     const nextWrap = document.createElement("div");
     nextWrap.className = "cs-next-wrap";
@@ -406,7 +406,7 @@ function showConfirmDialog(opts, onConfirm) {
   priceRow.className = "cs-price-row";
   const remainingIcon = document.createElement("img");
   remainingIcon.className = "cs-currency";
-  remainingIcon.src = isUpgrade ? "/assets/coin.png" : "/assets/gem.png";
+  remainingIcon.src = isUpgrade ? "/assets/coin.webp" : "/assets/gem.webp";
   remainingIcon.alt = isUpgrade ? "Coins" : "Gems";
   const remainingText = document.createElement("span");
   remainingText.textContent = `Remaining after purchase: ${Math.max(
@@ -425,7 +425,7 @@ function showConfirmDialog(opts, onConfirm) {
   const okBtn = document.createElement("button");
   okBtn.className = "cs-btn confirm";
   okBtn.innerHTML = `<img class="cs-currency" src="${
-    isUpgrade ? "/assets/coin.png" : "/assets/gem.png"
+    isUpgrade ? "/assets/coin.webp" : "/assets/gem.webp"
   }" alt=""/> <span>${price}</span>`;
 
   cancelBtn.onclick = () => backdrop.remove();
@@ -465,7 +465,7 @@ function showInsufficientDialog(currency) {
   const p = document.createElement("p");
   const icon = document.createElement("img");
   icon.className = "cs-currency";
-  icon.src = currency === "coins" ? "/assets/coin.png" : "/assets/gem.png";
+  icon.src = currency === "coins" ? "/assets/coin.webp" : "/assets/gem.webp";
   icon.alt = currency;
   p.appendChild(icon);
   const txt = document.createElement("span");

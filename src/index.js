@@ -256,9 +256,10 @@ export function setLobbyBackground(mapValue) {
   const map = String(mapValue);
   if (map === "2") {
     // Mangrove Meadow
-    document.body.style.backgroundImage = 'url("/assets/mangrove/lobbyBg.jpg")';
+    document.body.style.backgroundImage =
+      'url("/assets/mangrove/lobbyBg.webp")';
   } else {
     // Default map
-    document.body.style.backgroundImage = 'url("/assets/lushy/lobbyBg.jpg")';
+    document.body.style.backgroundImage = 'url("/assets/lushy/lobbyBg.webp")';
   }
 }

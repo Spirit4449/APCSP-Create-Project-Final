@@ -2,7 +2,7 @@
 const path = require("path");
 const MiniCssExtractPlugin = require("mini-css-extract-plugin");
 const CopyWebpackPlugin = require("copy-webpack-plugin");
-
+const { BundleAnalyzerPlugin } = require('webpack-bundle-analyzer');
 module.exports = {
   entry: {
     game: "./src/game.js",
@@ -76,5 +76,7 @@ module.exports = {
         },
       ],
     }),
+        new BundleAnalyzerPlugin({ analyzerMode: 'server', openAnalyzer: true }),
+
   ],
 };

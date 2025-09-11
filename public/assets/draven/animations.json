@@ -184,7 +184,7 @@
       "spriteSourceSize": { "x": 0, "y": 0, "w": 250, "h": 250 },
       "sourceSize": { "w": 250, "h": 250 }
     },
-        {
+    {
       "filename": "sliding00",
       "frame": { "x": 1750, "y": 500, "w": 250, "h": 250 },
       "rotated": false,
@@ -380,7 +380,7 @@
   "meta": {
     "app": "https://www.leshylabs.com/apps/sstool/",
     "version": "Leshy SpriteSheet Tool v0.8.4",
-    "image": "spritesheet.png",
+    "image": "spritesheet.webp",
     "size": { "w": 2000, "h": 1500 },
     "scale": 1
   }

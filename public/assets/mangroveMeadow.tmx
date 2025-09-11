@@ -4,7 +4,7 @@
   <export format="json"/>
  </editorsettings>
  <tileset firstgid="1" name="tilesheet" tilewidth="128" tileheight="128" tilecount="400" columns="20">
-  <image source="map.png" width="2560" height="2560"/>
+  <image source="map.webp" width="2560" height="2560"/>
  </tileset>
  <tileset firstgid="401" source=":/automap-tiles.tsx"/>
  <group id="8" name="Base">
