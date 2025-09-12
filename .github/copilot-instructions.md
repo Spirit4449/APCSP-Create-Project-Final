@@ -49,3 +49,15 @@ This project is a browser game built with Phaser (client) and Express + Socket.I
 - Redirects: `/game/:matchid` serves `game.html`; client reads matchId from path. If `/status` reports `live_match_id`, redirect to the live game.
 
 Keep edits aligned with these contracts and file locations; when changing a public event or route, update both server emit/handlers and the corresponding client listeners.
+
+## Rules
+
+- Follow existing patterns. Match file layout, naming (feature:verb for events), logging tone, and helper usage already in the repo.
+
+- Be surgical, not destructive. Prefer minimal diffs; avoid refactors, renames, or dependency changes unless explicitly asked.
+
+- Preserve public contracts. Do not change event names, routes, payload shapes, DOM IDs/classes, or DB schema without clear, explicit approval.
+
+- Suggest → then patch. When confidence < 80%, propose diagnostics or a small experiment first (extra logs, a guarded code path), not a sweeping change.
+
+- No build/tooling churn (webpack, eslint, tsconfig) unless the task is tooling itself.

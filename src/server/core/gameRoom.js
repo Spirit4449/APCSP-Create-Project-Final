@@ -20,6 +20,7 @@ class GameRoom {
     this.startTime = Date.now();
     this.players = new Map(); // socketId -> playerData
     this.gameState = null;
+  this.spawnVersion = Date.now(); // bump when scene resets to help clients de-dupe
 
     // Game loop (will migrate to fixed-step accumulator + snapshot cadence)
     this.gameLoop = null; // legacy interval reference (used only until refactor start)
@@ -206,12 +207,25 @@ class GameRoom {
     if (!playerData) return;
 
     // Prepare game state for this player
+    const computeSpawnIndex = (name, team) => {
+      try {
+        const teamList = (this.matchData.players || [])
+          .filter((p) => p.team === team)
+          .map((p) => ({ name: p.name }))
+          .sort((a, b) => a.name.localeCompare(b.name));
+        const idx = Math.max(0, teamList.findIndex((p) => p.name === name));
+        return idx;
+      } catch (e) {
+        return 0;
+      }
+    };
     const gameStateForPlayer = {
       matchId: this.matchId,
       mode: this.matchData.mode,
       map: this.matchData.map,
       yourTeam: playerData.team,
       yourCharacter: playerData.char_class,
+      spawnVersion: this.spawnVersion,
       players: Array.from(this.players.values()).map((p) => ({
         name: p.name,
         team: p.team,
@@ -222,6 +236,7 @@ class GameRoom {
         stats: { health: p.maxHealth },
         level: p.level,
         isAlive: p.isAlive,
+        spawnIndex: computeSpawnIndex(p.name, p.team),
       })),
       status: this.status,
     };

@@ -28,7 +28,6 @@ window.Phaser = Phaser;
 // Path to get assets
 const staticPath = "/assets";
 
-
 let __booted = false;
 function onReady(fn) {
   if (document.readyState === "loading") {
@@ -86,6 +85,9 @@ let gameEnded = false; // stops update loop network emissions after game over
 let gameInitialized = false; // track if game has been initialized
 let hasJoined = false;
 let joinInFlight = false; // prevent duplicate in-flight join emits
+// Spawn coordination
+let SPAWN_VERSION = 0; // increments per scene init to version spawns
+const SERVER_SPAWN_INDEX = Object.create(null); // name -> spawnIndex (if server provided)
 
 // Movement throttling variables
 let lastMovementSent = 0;
@@ -204,8 +206,8 @@ function setupGameEventListeners() {
       }
     }
   };
-  socket.on("connect", tryRejoin);
-  socket.on("reconnect", tryRejoin);
+  socket.on("connect", tryJoin);
+  socket.on("reconnect", tryJoin);
   // If we're already connected when listeners are added, attempt once now
   if (socket.connected) tryJoin();
 
@@ -216,7 +218,22 @@ function setupGameEventListeners() {
       status: gameState?.status,
     });
     gameInitialized = true;
-    // init received; no further rejoin attempts needed   
+    // init received; no further rejoin attempts needed
+
+    // Capture server-provided spawn index/version if present
+    try {
+      if (Array.isArray(gameState.players)) {
+        for (const p of gameState.players) {
+          if (typeof p.spawnIndex === "number") {
+            SERVER_SPAWN_INDEX[p.name] = p.spawnIndex;
+          }
+        }
+      }
+      if (typeof gameState.spawnVersion === "number") {
+        // Only advance if server version is newer
+        if (gameState.spawnVersion > SPAWN_VERSION) SPAWN_VERSION = gameState.spawnVersion;
+      }
+    } catch (_) {}
 
     // Update local game data with server state
     if (gameState.players) {
@@ -487,6 +504,7 @@ function initializePlayers(players) {
       y: playerData.y || 100,
       health: playerData.health || 100,
       isAlive: playerData.isAlive !== false,
+      spawnIndex: typeof playerData.spawnIndex === "number" ? playerData.spawnIndex : undefined,
     };
   });
 }
@@ -579,6 +597,8 @@ class GameScene extends Phaser.Scene {
   }
 
   initializeGameWorld() {
+  // New spawn version for this scene
+  SPAWN_VERSION = Math.max(SPAWN_VERSION, Date.now());
     // No per-scene spawn plan needed now; map modules provide positioning helpers
     // Creates the map objects based on game data
     if (gameData.map === 1) {
@@ -672,22 +692,29 @@ class GameScene extends Phaser.Scene {
         }
       }
     } catch (_) {}
-    // After sprite exists and body sized, move to a map-appropriate spawn slot
+    // After sprite exists and body sized, move to a map-appropriate spawn slot (prefer server spawnIndex)
     try {
-      const teamList = (gameData.players || [])
-        .filter((p) => p.team === gameData.yourTeam)
-        .sort((a, b) => a.name.localeCompare(b.name));
-      const myIndex = Math.max(
-        0,
-        teamList.findIndex((p) => p.name === username)
-      );
+      const serverIdx = SERVER_SPAWN_INDEX[username];
+      let myIndex;
+      if (typeof serverIdx === "number") {
+        myIndex = Math.max(0, serverIdx);
+      } else {
+        const teamList = (gameData.players || [])
+          .filter((p) => p.team === gameData.yourTeam)
+          .sort((a, b) => a.name.localeCompare(b.name));
+        myIndex = Math.max(
+          0,
+          teamList.findIndex((p) => p.name === username)
+        );
+      }
+      const teamSize = (gameData.players || []).filter((p) => p.team === gameData.yourTeam).length;
       if (String(gameData.map) === "1") {
         positionLushySpawn(
           this,
           player,
           gameData.yourTeam,
           myIndex,
-          teamList.length
+          teamSize
         );
       } else if (String(gameData.map) === "2") {
         positionMangroveSpawn(this, player, gameData.yourTeam, myIndex);
@@ -750,6 +777,33 @@ class GameScene extends Phaser.Scene {
       const isTeammate = playerData.team === gameData.yourTeam;
       const playerContainer = isTeammate ? teamPlayers : opponentPlayers;
 
+      // If an instance already exists for this name in this spawn version, upsert instead of re-create
+      const existing = playerContainer[playerData.name];
+      if (existing && existing.opponent && existing._spawnVersion === SPAWN_VERSION) {
+        // Ensure UI position is refreshed and exit
+        try {
+          const idx = typeof existing.spawnIndex === "number"
+            ? existing.spawnIndex
+            : (typeof SERVER_SPAWN_INDEX[playerData.name] === "number"
+                ? SERVER_SPAWN_INDEX[playerData.name]
+                : undefined);
+          const index = typeof idx === "number" ? idx : (() => {
+            const teamList = (gameData.players || [])
+              .filter((p) => p.team === playerData.team)
+              .sort((a, b) => a.name.localeCompare(b.name));
+            return Math.max(0, teamList.findIndex((p) => p.name === playerData.name));
+          })();
+          if (String(gameData.map) === "1") {
+            positionLushySpawn(this, existing.opponent, playerData.team, index,
+              (gameData.players || []).filter((p) => p.team === playerData.team).length);
+          } else if (String(gameData.map) === "2") {
+            positionMangroveSpawn(this, existing.opponent, playerData.team, index);
+          }
+          if (existing.updateUIPosition) existing.updateUIPosition();
+        } catch (_) {}
+        return;
+      }
+
       // Determine spawn info from plan
       // Create OpPlayer instance with correct constructor parameters
       const opPlayer = new OpPlayer(
@@ -765,22 +819,32 @@ class GameScene extends Phaser.Scene {
         String(gameData.map) // map as string for spawn helpers
       );
 
+      // Tag instance with spawn version and optional server index to support idempotency
+      opPlayer._spawnVersion = SPAWN_VERSION;
+      if (typeof SERVER_SPAWN_INDEX[playerData.name] === "number") {
+        opPlayer.spawnIndex = SERVER_SPAWN_INDEX[playerData.name];
+      }
+
       // Snap opponent sprite to its map-specific spawn immediately
       try {
-        const teamList = (gameData.players || [])
-          .filter((p) => p.team === playerData.team)
-          .sort((a, b) => a.name.localeCompare(b.name));
-        const index = Math.max(
-          0,
-          teamList.findIndex((p) => p.name === playerData.name)
-        );
+        const idx = typeof opPlayer.spawnIndex === "number"
+          ? opPlayer.spawnIndex
+          : (typeof playerData.spawnIndex === "number"
+              ? playerData.spawnIndex
+              : (() => {
+                  const teamList = (gameData.players || [])
+                    .filter((p) => p.team === playerData.team)
+                    .sort((a, b) => a.name.localeCompare(b.name));
+                  return Math.max(0, teamList.findIndex((p) => p.name === playerData.name));
+                })());
+        const index = Math.max(0, idx);
         if (String(gameData.map) === "1") {
           positionLushySpawn(
             this,
             opPlayer.opponent,
             playerData.team,
             index,
-            teamList.length
+            (gameData.players || []).filter((p) => p.team === playerData.team).length
           );
         } else if (String(gameData.map) === "2") {
           positionMangroveSpawn(
@@ -801,6 +865,16 @@ class GameScene extends Phaser.Scene {
       }
 
       playerContainer[playerData.name] = opPlayer;
+
+      // TTL self-clean: if this instance isn't the canonical mapping soon, destroy it to avoid ghosts
+      setTimeout(() => {
+        try {
+          if (playerContainer[playerData.name] !== opPlayer) {
+            if (typeof opPlayer.destroy === "function") opPlayer.destroy();
+            else if (opPlayer.opponent?.destroy) opPlayer.opponent.destroy();
+          }
+        } catch (_) {}
+      }, 1500);
     });
   }
 

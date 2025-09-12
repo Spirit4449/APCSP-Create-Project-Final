@@ -353,7 +353,6 @@ function initSocket({ io, COOKIE_SECRET, db }) {
       }
     });
 
-
     socket.on("game:input", (inputData) => {
       // Forward to game room - the game room will validate the socket is in the room
       // This is handled in gameRoom.js via the setupPlayerSocket method
