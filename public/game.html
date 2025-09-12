@@ -8,54 +8,237 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Poppins:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&family=Press+Start+2P&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&family=Press+Start+2P&display=swap"
       rel="stylesheet"
     />
+    <style>
+      html,
+      body {
+        margin: 0;
+        overflow: hidden;
+        font-family: "Poppins", sans-serif;
+        background: transparent !important;
+        height: 100%;
+      }
+      /* Full-bleed background image behind Phaser */
+      .background {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        z-index: 0;
+      }
+      .background-image {
+        width: 100%;
+        height: 100%;
+        object-position: 50% 100%;
+        object-fit: cover;
+        display: block;
+      }
+      /* Ensure Phaser canvas is above and transparent */
+      canvas {
+        position: fixed;
+        left: 50%;
+        transform: translateX(-50%);
+        bottom: 0;
+        z-index: 1;
+        background: transparent !important;
+        display: block;
+      }
+      #game-bg {
+        opacity: 0;
+      }
+      #game-bg.visible {
+        opacity: 1;
+        transition: opacity 0.2s ease-in;
+      }
+
+      /* ===== Loading UI ===== */
+      #loading-wrap {
+        position: fixed;
+        left: 50%;
+        transform: translateX(-50%);
+        bottom: 20px;
+        width: min(720px, 92vw);
+        z-index: 3;
+        pointer-events: none;
+      }
+
+      #loading-text {
+        text-align: center;
+        font-weight: 600;
+        font-size: clamp(14px, 2.2vw, 18px);
+        margin: 0 0 8px 0;
+        color: #fff;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+      }
+
+      .loading-shell {
+        position: relative;
+        width: 100%;
+        height: 18px;
+        border-radius: 6px;
+        overflow: hidden;
+        background: rgba(0, 0, 0, 0.35);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+      }
+
+      .loading-fill {
+        position: absolute;
+        top: 0;
+        left: 0;
+        height: 100%;
+        width: 0%;
+        background: red;
+        transition: width 200ms ease;
+      }
+
+      #loading-percent {
+        position: absolute;
+        right: 10px;
+        top: 50%;
+        transform: translateY(-50%);
+        font-size: 12px;
+        font-weight: 700;
+        color: #fff;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+        pointer-events: none;
+      }
+
+      .hidden {
+        display: none !important;
+      }
+    </style>
   </head>
-  <script src="https://cdn.jsdelivr.net/npm/phaser@3/dist/phaser-arcade-physics.min.js"></script>
-  <style>
-    html,
-    body {
-      margin: 0;
-      overflow: hidden;
-      font-family: "Poppins", sans-serif;
-      background: transparent !important;
-      height: 100%;
-    }
-    /* Full-bleed background image behind Phaser */
-    .background {
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      overflow: hidden;
-      z-index: 0;
-    }
-    .background-image {
-      width: 100%;
-      height: 100%;
-      object-position: 50% 100%;
-      object-fit: cover;
-      display: block;
-    }
-    /* Ensure Phaser canvas is above and transparent */
-    canvas {
-      position: fixed;
-      left: 50%;
-      transform: translateX(-50%);
-      bottom: 0;
-      z-index: 1;
-      background: transparent !important;
-      display: block;
-    }
-  </style>
+
   <body>
-    <div class="background">
-      <img src="/assets/lushy/gameBg.webp" class="background-image" alt="" />
+    <div class="background" id="matchmaking-screen">
+      <img
+        src="/assets/matchmakingscreen.webp"
+        class="background-image"
+        alt="loading"
+      />
     </div>
+
+    <div class="background" id="game-bg">
+      <img
+        src="/assets/lushy/gameBg.webp"
+        class="background-image"
+        alt="game background"
+      />
+    </div>
+
     <div id="hud"></div>
 
-    <script src="/bundles/game.bundle.js"></script>
+    <!-- Loading UI -->
+    <div
+      id="loading-wrap"
+      role="status"
+      aria-live="polite"
+      aria-label="Loading"
+    >
+      <p id="loading-text">Loading...</p>
+      <div class="loading-shell" id="loading-shell">
+        <div class="loading-fill" id="loading-bar-fill"></div>
+        <span id="loading-percent">0%</span>
+      </div>
+    </div>
+
+    <!-- Helper: update progress -->
+    <script>
+      function updateLoading(progress, text) {
+        // Keep last progress in a closure/static var
+        if (typeof updateLoading.lastPct !== "number") {
+          updateLoading.lastPct = 0;
+        }
+
+        let pct = Math.round(Math.max(0, Math.min(100, Number(progress) || 0)));
+
+        // Don’t let it go backwards
+        if (pct < updateLoading.lastPct) {
+          pct = updateLoading.lastPct;
+        }
+        updateLoading.lastPct = pct;
+
+        const bar = document.getElementById("loading-bar-fill");
+        const label = document.getElementById("loading-percent");
+        const status = document.getElementById("loading-text");
+
+        if (!bar || !label || !status) return;
+
+        bar.style.width = pct + "%";
+        label.textContent = pct + "%";
+        if (typeof text === "string") status.textContent = text;
+
+        if (pct >= 100) {
+          document.getElementById("loading-wrap")?.classList.add("hidden");
+          document
+            .getElementById("matchmaking-screen")
+            ?.classList.add("hidden");
+          document.getElementById("game-bg")?.classList.add("visible");
+        }
+      }
+    </script>
+
+    <script>
+      // map scripts phase to 0–50
+      const MAX_BEFORE_DONE = 48; // cap so it never reaches 50% until bundle finishes
+      let scriptPct = 0;
+      let creepTimer = null;
+
+      function startCreep(label) {
+        stopCreep();
+        creepTimer = setInterval(() => {
+          // gentle creep; raise step if you want faster movement
+          if (scriptPct < MAX_BEFORE_DONE) {
+            scriptPct = Math.min(MAX_BEFORE_DONE, scriptPct + 0.6);
+            updateLoading(scriptPct, label);
+          }
+        }, 100);
+      }
+      function stopCreep() {
+        if (creepTimer) {
+          clearInterval(creepTimer);
+          creepTimer = null;
+        }
+      }
+
+      function loadScript(src) {
+        return new Promise((res, rej) => {
+          const s = document.createElement("script");
+          s.src = src;
+          s.async = false; // keep order: Phaser first, then game
+          s.onload = res;
+          s.onerror = rej;
+          document.body.appendChild(s);
+        });
+      }
+
+      (async () => {
+        // Start creeping immediately during Phaser download
+        startCreep("Downloading engine…");
+        await loadScript(
+          "https://cdn.jsdelivr.net/npm/phaser@3/dist/phaser-arcade-physics.min.js"
+        );
+
+        // Ensure we show some progress after engine arrives
+        scriptPct = Math.max(scriptPct, 22);
+        updateLoading(scriptPct, "Engine ready");
+
+        // Keep creeping (still capped at 48%) during bundle download
+        updateLoading(scriptPct, "Downloading game…");
+        await loadScript("/bundles/game.bundle.js");
+        window.__BOOT_GAME__ && window.__BOOT_GAME__();
+        // Finish scripts slice cleanly
+        stopCreep();
+        updateLoading(50, "Scripts loaded"); // handoff to Phaser preload (50–90)
+      })().catch((err) => {
+        console.error(err);
+        stopCreep();
+        updateLoading(50, "Failed to load");
+      });
+    </script>
   </body>
 </html>

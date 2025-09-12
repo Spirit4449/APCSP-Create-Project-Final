@@ -225,7 +225,7 @@ class GameRoom {
       })),
       status: this.status,
     };
-
+    console.log("Emitting initial game state to player", gameStateForPlayer);
     socket.emit("game:init", gameStateForPlayer);
   }
 

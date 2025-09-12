@@ -28,6 +28,18 @@ window.Phaser = Phaser;
 // Path to get assets
 const staticPath = "/assets";
 
+
+let __booted = false;
+function onReady(fn) {
+  if (document.readyState === "loading") {
+    // not ready yet — wait once
+    document.addEventListener("DOMContentLoaded", fn, { once: true });
+  } else {
+    // DOM is already ready — run on next tick to keep ordering sane
+    queueMicrotask(fn); // or setTimeout(fn, 0)
+  }
+}
+
 // Get match ID from URL path, fallback to query params or session storage
 function getMatchIdFromUrl() {
   // Try URL path first: /game/123
@@ -61,6 +73,8 @@ let username = null;
 let gameData = null; // Will be fetched from /gamedata endpoint
 // Expose current match session details (level, per-character damages) for character modules
 window.__MATCH_SESSION__ = window.__MATCH_SESSION__ || {};
+// Cache join payload for reconnect re-emit safety
+let __joinPayload = { matchId: Number(matchId || 0) };
 
 // Map variable
 let mapObjects;
@@ -70,6 +84,8 @@ const opponentPlayers = [];
 const teamPlayers = [];
 let gameEnded = false; // stops update loop network emissions after game over
 let gameInitialized = false; // track if game has been initialized
+let hasJoined = false;
+let joinInFlight = false; // prevent duplicate in-flight join emits
 
 // Movement throttling variables
 let lastMovementSent = 0;
@@ -136,22 +152,25 @@ async function fetchGameData() {
 // Initialize game connection
 async function initializeGame() {
   try {
+    if (__booted) return;
+    __booted = true;
     console.log("Fetching game data for match:", matchId);
     gameData = await fetchGameData();
     console.log("Game data received:", gameData);
     username = gameData.yourName || username;
 
     // 1) Register listeners before join
-    await waitForConnect(4000);
-    console.log("Setting up game listeners")
+    console.log("Setting up game listeners");
     setupGameEventListeners();
 
-    // 2) Include gameId if your /gamedata returns it
-    const joinPayload = { matchId: Number(matchId) };
-    if (gameData?.gameId) joinPayload.gameId = Number(gameData.gameId);
+    // 2) Enrich payload with gameId if provided
+    if (gameData?.gameId) __joinPayload.gameId = Number(gameData.gameId);
 
-    // 3) Now join
-    socket.emit("game:join", joinPayload);
+    // 3) Ensure connection; if not connected, connect and join on next connect
+    try {
+      await waitForConnect(4000);
+    } catch {}
+    // Do not emit here; connect/reconnect handlers (and immediate call below) will do it once.
   } catch (error) {
     console.error("Failed to initialize game:", error);
   }
@@ -159,10 +178,45 @@ async function initializeGame() {
 
 // Set up socket event listeners for game
 function setupGameEventListeners() {
+  // Re-join room if socket reconnects before init completed (idempotent on server)
+  const tryJoin = () => {
+    if (
+      !gameInitialized &&
+      __joinPayload &&
+      Number(__joinPayload.matchId) > 0 &&
+      !hasJoined &&
+      !joinInFlight
+    ) {
+      console.log("[game] connect", __joinPayload);
+      try {
+        joinInFlight = true;
+        socket.emit("game:join", __joinPayload, (ack) => {
+          joinInFlight = false;
+          if (!ack || ack.ok !== true) {
+            console.warn("[game] join ack failed", ack);
+          } else {
+            console.log("[game] join ack ok", ack);
+            hasJoined = true;
+          }
+        });
+      } catch (e) {
+        console.warn("[game] join emit error", e);
+      }
+    }
+  };
+  socket.on("connect", tryRejoin);
+  socket.on("reconnect", tryRejoin);
+  // If we're already connected when listeners are added, attempt once now
+  if (socket.connected) tryJoin();
+
   // Game initialization
   socket.on("game:init", (gameState) => {
-    console.log("Game initialized:");
+    console.log("Game initialized:", {
+      players: Array.isArray(gameState?.players) ? gameState.players.length : 0,
+      status: gameState?.status,
+    });
     gameInitialized = true;
+    // init received; no further rejoin attempts needed   
 
     // Update local game data with server state
     if (gameState.players) {
@@ -184,6 +238,8 @@ function setupGameEventListeners() {
   socket.on("game:start", (data) => {
     console.log("Game starting:", data);
   });
+
+  // No periodic join retries needed; reconnect handler covers transient drops
 
   // Server snapshots for interpolation
   socket.on("game:snapshot", (snapshot) => {
@@ -436,7 +492,7 @@ function initializePlayers(players) {
 }
 
 // Initialize game when page loads
-document.addEventListener("DOMContentLoaded", initializeGame);
+window.__BOOT_GAME__ = () => onReady(initializeGame);
 
 // Phaser class to setup the game
 class GameScene extends Phaser.Scene {
@@ -446,6 +502,16 @@ class GameScene extends Phaser.Scene {
 
   // Preloads assets
   preload() {
+    this.load.on("progress", (p) => {
+      // 50% - 90%
+      const pct = Math.floor(50 + p * 40); // maps 0–1 → 50–90
+      updateLoading(pct, `Loading assets…`);
+    });
+
+    this.load.once("complete", () => {
+      updateLoading(95, "Assets loaded");
+    });
+
     // Character assets (preload all registered characters)
     preloadAll(this, staticPath);
 
@@ -456,7 +522,7 @@ class GameScene extends Phaser.Scene {
     this.load.image(
       "lushy-side-platform",
       `${staticPath}/lushy/sidePlatform.webp`
-    ); 
+    );
     this.load.image(
       "mangrove-tiny-platform",
       `${staticPath}/mangrove/tinyPlatform.webp`
@@ -483,8 +549,7 @@ class GameScene extends Phaser.Scene {
     // Combat/health SFX
     this.load.audio("sfx-damage", `${staticPath}/damage.mp3`);
     this.load.audio("sfx-heal", `${staticPath}/heal.mp3`);
-    // Music (non-looping bgm, separate win/lose stingers)
-    this.load.audio("main", `${staticPath}/main.mp3`);
+    // Music (non-blocking BGM: handled via HTMLAudio at runtime)
     this.load.audio("win", `${staticPath}/win.mp3`);
     this.load.audio("lose", `${staticPath}/lose.mp3`);
   }
@@ -497,6 +562,7 @@ class GameScene extends Phaser.Scene {
     // Wait for game data before creating map and player
     if (!gameData) {
       console.log("Waiting for game data...");
+      updateLoading(96, "Server error. Refresh or return to lobby.");
       // Poll for game data
       const pollForGameData = () => {
         if (gameData) {
@@ -532,14 +598,30 @@ class GameScene extends Phaser.Scene {
       if (this._bgmStarted) return;
       this._bgmStarted = true;
       try {
-        if (!this.bgmMain) {
-          this.bgmMain = this.sound.add("main", {
-            volume: 0.02,
-            loop: false,
-            preload: false,
+        if (!this._bgmEl) {
+          const el = new Audio(`${staticPath}/main.mp3`);
+          el.preload = "none"; // or 'metadata' to fetch small header first
+          el.loop = false; // set to true if you want continuous loop
+          el.volume = 1;
+          // Optional: el.crossOrigin = 'anonymous';
+          this._bgmEl = el;
+          // Hook into scene lifecycle for cleanup
+          this.events.once("shutdown", () => {
+            try {
+              this._bgmEl?.pause();
+            } catch (_) {}
+            this._bgmEl = null;
+          });
+          this.events.on("pause", () => this._bgmEl?.pause());
+          this.events.on("resume", () => {
+            try {
+              this._bgmEl?.play();
+            } catch (_) {}
           });
         }
-        this.bgmMain.play();
+        // Play (will stream progressively)
+        const p = this._bgmEl.play();
+        if (p && typeof p.catch === "function") p.catch(() => {});
       } catch (e) {}
     };
     if (this.sound.locked) {
@@ -655,6 +737,7 @@ class GameScene extends Phaser.Scene {
       // Add collider between the object and each map object
       this.physics.add.collider(player, mapObject);
     });
+    updateLoading(100, "Starting...");
   }
 
   initializeOtherPlayers() {
@@ -723,7 +806,7 @@ class GameScene extends Phaser.Scene {
 
   update() {
     // Only process if game is initialized
-    if (!gameInitialized) return;
+    if (!hasJoined || !gameInitialized || dead || gameEnded) return;
 
     // Handle player movement input and send to server
     if (player && !dead && !gameEnded) {
@@ -747,7 +830,7 @@ class GameScene extends Phaser.Scene {
           currentState.animation !== lastPlayerState.animation
         ) {
           // Disable per-message compression for movement for lower latency on constrained devices
-          socket.compress(false).emit("game:input", currentState);
+          socket.volatile.compress(false).emit("game:input", currentState);
 
           lastPlayerState = { ...currentState };
           lastMovementSent = now;

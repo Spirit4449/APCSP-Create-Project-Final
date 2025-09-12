@@ -374,6 +374,7 @@ function registerRoutes({ app, io, db, auth, pageRoot, distDir }) {
 
   // Game
   app.post("/gamedata", async (req, res) => {
+    console.log("Fetching game data for match:", req.body);
     try {
       // Lazy import to avoid server startup circular deps
       const {
