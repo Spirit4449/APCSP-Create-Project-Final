@@ -110,6 +110,123 @@
       .hidden {
         display: none !important;
       }
+
+      /* ===== Battle Start Overlay (mimics matchmaking aesthetic) ===== */
+      #battle-start-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 9998;
+      }
+      #battle-start-overlay.hidden {
+        display: none !important;
+      }
+      #battle-start-overlay .bs-wrap {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: opacity 0.3s ease;
+        opacity: 0;
+      }
+      #battle-start-overlay .bs-backdrop {
+        position: absolute;
+        inset: 0;
+        overflow: hidden;
+        backdrop-filter: blur(7px);
+        transform: scale(1.02);
+        width: 100%;
+        height: 100%;
+        background-color: #2e2e2e4b;
+      }
+      #battle-start-overlay .bs-panel {
+        position: relative;
+        z-index: 1;
+        background: rgba(10, 10, 12, 0.85);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 14px;
+        padding: 20px 24px;
+        width: min(900px, 92vw);
+        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+        color: #fff;
+        text-align: center;
+      }
+      #battle-start-overlay .bs-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 16px;
+        font-weight: 700;
+      }
+      #battle-start-overlay .bs-mode,
+      #battle-start-overlay .bs-map {
+        font-size: clamp(14px, 2vw, 16px);
+        opacity: 0.9;
+      }
+      #battle-start-overlay .bs-vs {
+        font-size: clamp(20px, 3.6vw, 28px);
+        letter-spacing: 1px;
+        color: #ffd166;
+        text-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
+      }
+      #battle-start-overlay .bs-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+      }
+      #battle-start-overlay .bs-col {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 12px;
+        padding: 8px;
+      }
+      #battle-start-overlay .bs-col.your {
+        border-right: 1px dashed rgba(255, 255, 255, 0.08);
+      }
+      #battle-start-overlay .bs-player {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+        padding: 12px;
+        min-width: 140px;
+        background: linear-gradient(
+          180deg,
+          rgba(255, 255, 255, 0.06),
+          rgba(255, 255, 255, 0.02)
+        );
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 10px;
+      }
+      #battle-start-overlay .bs-col.opp .bs-player {
+        background: linear-gradient(
+          180deg,
+          rgba(255, 100, 100, 0.1),
+          rgba(255, 255, 255, 0.02)
+        );
+        border-color: rgba(255, 120, 120, 0.2);
+      }
+      #battle-start-overlay .bs-player img {
+        width: 64px;
+        image-rendering: pixelated;
+      }
+      #battle-start-overlay .bs-name {
+        font-size: 14px;
+        font-weight: 600;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+      }
+      #battle-start-overlay .bs-count {
+        font-size: clamp(28px, 6vw, 56px);
+        font-weight: 800;
+        margin: 8px 0 2px;
+        letter-spacing: 2px;
+      }
+      #battle-start-overlay .bs-sub {
+        opacity: 0.8;
+        font-size: 13px;
+      }
     </style>
   </head>
 
@@ -131,6 +248,26 @@
     </div>
 
     <div id="hud"></div>
+
+    <!-- Battle Start Overlay (populated by game.js) -->
+    <div id="battle-start-overlay" class="hidden" aria-hidden="true">
+      <div class="bs-wrap">
+        <div class="bs-backdrop"></div>
+        <div class="bs-panel">
+          <div class="bs-head">
+            <div class="bs-mode" id="bs-mode">1v1</div>
+            <div class="bs-vs">VS</div>
+            <div class="bs-map" id="bs-map">Map 1</div>
+          </div>
+          <div class="bs-grid">
+            <div class="bs-col your" id="bs-your"></div>
+            <div class="bs-col opp" id="bs-opp"></div>
+          </div>
+          <div id="countdown-display" class="bs-count">3</div>
+          <div class="bs-sub">Waiting on other players…</div>
+        </div>
+      </div>
+    </div>
 
     <!-- Loading UI -->
     <div

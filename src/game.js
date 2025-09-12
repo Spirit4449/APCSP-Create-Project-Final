@@ -85,6 +85,7 @@ let gameEnded = false; // stops update loop network emissions after game over
 let gameInitialized = false; // track if game has been initialized
 let hasJoined = false;
 let joinInFlight = false; // prevent duplicate in-flight join emits
+let battleState = null; // track if the game has started to suppress pre-start UI
 // Spawn coordination
 let SPAWN_VERSION = 0; // increments per scene init to version spawns
 const SERVER_SPAWN_INDEX = Object.create(null); // name -> spawnIndex (if server provided)
@@ -178,6 +179,70 @@ async function initializeGame() {
   }
 }
 
+// -----------------------------
+// Battle Start Overlay (static DOM in game.html)
+// -----------------------------
+function showBattleStartOverlay(players) {
+  if (battleState !== "waiting") return null;
+  const root = document.getElementById("battle-start-overlay");
+  if (!root) return null;
+
+  // Background image based on map
+  const bg = document.getElementById("bs-bg");
+  if (bg) {
+    bg.src =
+      String(gameData?.map) === "2"
+        ? "/assets/mangrove/gameBg.webp"
+        : "/assets/lushy/gameBg.webp";
+  }
+
+  // Header labels
+  const modeEl = document.getElementById("bs-mode");
+  if (modeEl)
+    modeEl.textContent = `${gameData?.mode || 1}v${gameData?.mode || 1}`;
+  const mapEl = document.getElementById("bs-map");
+  if (mapEl) mapEl.textContent = `Map ${gameData?.map || 1}`;
+
+  // Columns
+  const yourCol = document.getElementById("bs-your");
+  const oppCol = document.getElementById("bs-opp");
+  if (yourCol) yourCol.innerHTML = "";
+  if (oppCol) oppCol.innerHTML = "";
+  const yourTeam = (players || []).filter((p) => p.team === gameData?.yourTeam);
+  const oppTeam = (players || []).filter((p) => p.team !== gameData?.yourTeam);
+
+  const appendTile = (container, p) => {
+    if (!container) return;
+    const tile = document.createElement("div");
+    tile.className = "bs-player";
+    const img = document.createElement("img");
+    const cls = (p?.char_class || "ninja").toLowerCase();
+    img.src = `/assets/${cls}/body.webp`;
+    img.alt = cls;
+    const name = document.createElement("div");
+    name.className = "bs-name";
+    const nm = p?.name || "Player";
+    name.textContent = nm + (nm === username ? " (You)" : "");
+    tile.appendChild(img);
+    tile.appendChild(name);
+    container.appendChild(tile);
+  };
+
+  yourTeam.forEach((p) => appendTile(yourCol, p));
+  oppTeam.forEach((p) => appendTile(oppCol, p));
+
+  // Reset countdown label
+  const c = document.getElementById("countdown-display");
+  if (c) c.textContent = "3";
+
+  // Show and fade-in
+  root.classList.remove("hidden");
+  root.setAttribute("aria-hidden", "false");
+  const wrap = root.querySelector(".bs-wrap");
+  if (wrap) requestAnimationFrame(() => (wrap.style.opacity = "1"));
+  return root;
+}
+
 // Set up socket event listeners for game
 function setupGameEventListeners() {
   // Re-join room if socket reconnects before init completed (idempotent on server)
@@ -218,6 +283,8 @@ function setupGameEventListeners() {
       status: gameState?.status,
     });
     gameInitialized = true;
+    console.log(gameState.status)
+    battleState = String(gameState?.status || "waiting").toLocaleLowerCase();
     // init received; no further rejoin attempts needed
 
     // Capture server-provided spawn index/version if present
@@ -255,6 +322,9 @@ function setupGameEventListeners() {
   // Game start countdown
   socket.on("game:start", (data) => {
     console.log("Game starting:", data);
+    battleState = "active";
+    // Start the countdown animation
+    startCountdown();
   });
 
   // No periodic join retries needed; reconnect handler covers transient drops
@@ -765,6 +835,14 @@ class GameScene extends Phaser.Scene {
       this.physics.add.collider(player, mapObject);
     });
     updateLoading(100, "Starting...");
+    // Show battle start overlay with player info if match hasn't started
+    const alreadyLive =
+      battleState === "active" ||
+      battleState === "started" ||
+      battleState === "running";
+    if (!alreadyLive && Array.isArray(gameData.players)) {
+      showBattleStartOverlay(gameData.players);
+    }
   }
 
   initializeOtherPlayers() {
@@ -1208,6 +1286,55 @@ const config = {
 const game = new Phaser.Game(config);
 
 export { opponentPlayers, teamPlayers };
+
+function startCountdown() {
+  const countdownEl = document.getElementById("countdown-display");
+  if (!countdownEl) return;
+
+  let count = 3;
+
+  const updateCountdown = () => {
+    if (count > 0) {
+      countdownEl.style.transform = "scale(0.5)";
+      countdownEl.style.opacity = "0.5";
+
+      setTimeout(() => {
+        countdownEl.textContent = count;
+        countdownEl.style.transform = "scale(1.2)";
+        countdownEl.style.opacity = "1";
+        countdownEl.style.transition = "transform 0.3s ease, opacity 0.3s ease";
+
+        setTimeout(() => {
+          countdownEl.style.transform = "scale(1)";
+        }, 150);
+      }, 50);
+
+      count--;
+      setTimeout(updateCountdown, 1000);
+    } else {
+      countdownEl.textContent = "FIGHT!";
+      countdownEl.style.color = "#ef4444";
+      countdownEl.style.transform = "scale(1.5)";
+
+      setTimeout(() => {
+        hideBattleStartOverlay();
+      }, 1000);
+    }
+  };
+
+  updateCountdown();
+}
+
+function hideBattleStartOverlay() {
+  const overlay = document.getElementById("battle-start-overlay");
+  if (!overlay) return;
+  const wrap = overlay.querySelector(".bs-wrap");
+  if (wrap) wrap.style.opacity = "0";
+  setTimeout(() => {
+    overlay.classList.add("hidden");
+    overlay.setAttribute("aria-hidden", "true");
+  }, 300);
+}
 
 // -----------------------------
 // Simple Game Over Overlay
