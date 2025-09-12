@@ -20,7 +20,6 @@ class GameRoom {
     this.startTime = Date.now();
     this.players = new Map(); // socketId -> playerData
     this.gameState = null;
-    this.spawnVersion = Date.now(); // bump when scene resets to help clients de-dupe
 
     // Game loop (will migrate to fixed-step accumulator + snapshot cadence)
     this.gameLoop = null; // legacy interval reference (used only until refactor start)
@@ -40,16 +39,14 @@ class GameRoom {
     this.REGEN_MIN_ABS = 500; // absolute minimum heal per tick (fixed amount, not percent)
     this.REGEN_BROADCAST_MIN_MS = 120; // avoid spamming health-update too fast
 
+    // Versioning for idempotent spawns on clients
+    this.spawnVersion = Date.now();
+
     console.log(
       `[GameRoom ${matchId}] Created for mode ${matchData.mode}, map ${matchData.map}`
     );
   }
 
-  /**
-   * Add a player to this game room
-   * @param {object} socket
-   * @param {object} user
-   */
   async addPlayer(socket, user) {
     // Verify this user is actually supposed to be in this match
     const isParticipant = this.matchData.players.some(
@@ -275,37 +272,9 @@ class GameRoom {
    * Initialize spawn positions for players
    */
   initializeSpawnPositions() {
-    const spawnPositions = {
-      team1: [
-        { x: -100, y: -100 },
-        { x: -100, y: -100 },
-        { x: -100, y: -100 },
-      ],
-      team2: [
-        { x: -100, y: -100 },
-        { x: -100, y: -100 },
-        { x: -100, y: -100 },
-      ],
-    };
-
-    let team1Index = 0;
-    let team2Index = 0;
-
-    for (const playerData of this.players.values()) {
-      if (playerData.team === "team1") {
-        const spawn =
-          spawnPositions.team1[team1Index % spawnPositions.team1.length];
-        playerData.x = spawn.x;
-        playerData.y = spawn.y;
-        team1Index++;
-      } else {
-        const spawn =
-          spawnPositions.team2[team2Index % spawnPositions.team2.length];
-        playerData.x = spawn.x;
-        playerData.y = spawn.y;
-        team2Index++;
-      }
-    }
+    // No-op: Client is responsible for map-accurate spawn placement via
+    // positionLushySpawn/positionMangroveSpawn helpers. Server will adopt
+    // positions from client input in Phase 1.
   }
 
   /**
