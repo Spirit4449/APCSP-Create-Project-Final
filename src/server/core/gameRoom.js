@@ -20,7 +20,7 @@ class GameRoom {
     this.startTime = Date.now();
     this.players = new Map(); // socketId -> playerData
     this.gameState = null;
-  this.spawnVersion = Date.now(); // bump when scene resets to help clients de-dupe
+    this.spawnVersion = Date.now(); // bump when scene resets to help clients de-dupe
 
     // Game loop (will migrate to fixed-step accumulator + snapshot cadence)
     this.gameLoop = null; // legacy interval reference (used only until refactor start)
@@ -213,7 +213,10 @@ class GameRoom {
           .filter((p) => p.team === team)
           .map((p) => ({ name: p.name }))
           .sort((a, b) => a.name.localeCompare(b.name));
-        const idx = Math.max(0, teamList.findIndex((p) => p.name === name));
+        const idx = Math.max(
+          0,
+          teamList.findIndex((p) => p.name === name)
+        );
         return idx;
       } catch (e) {
         return 0;
@@ -274,14 +277,14 @@ class GameRoom {
   initializeSpawnPositions() {
     const spawnPositions = {
       team1: [
-        { x: -100 , y: -100 },
-        { x: -100 , y: -100 },
-        { x: -100 , y: -100 },
+        { x: -100, y: -100 },
+        { x: -100, y: -100 },
+        { x: -100, y: -100 },
       ],
       team2: [
-        { x: -100 , y: -100 },
-        { x: -100 , y: -100 },
-        { x: -100 , y: -100 },
+        { x: -100, y: -100 },
+        { x: -100, y: -100 },
+        { x: -100, y: -100 },
       ],
     };
 
