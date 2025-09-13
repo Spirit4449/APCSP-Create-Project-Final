@@ -757,8 +757,12 @@ class GameScene extends Phaser.Scene {
     // Ensure all character animations are registered for this scene
     setupAll(this);
 
-    // Force-create GL textures for common attack assets across characters
-    prewarmTextures(this);
+    // Prewarm textures is only meaningful for WebGL (uploads to GPU)
+    try {
+      if (this.game && this.game.config && this.game.config.renderType === Phaser.WEBGL) {
+        prewarmTextures(this);
+      }
+    } catch (_) {}
 
     // Background music: play once (2:30 track), no loop, but only after audio unlock (user gesture)
     this._bgmStarted = false;
@@ -1321,8 +1325,8 @@ class GameScene extends Phaser.Scene {
 }
 
 const config = {
-  // Force WebGL and enable transparency so the canvas can show the HTML/CSS background behind it
-  type: Phaser.WEBGL,
+    // Force Canvas renderer; enable transparency so the canvas can show the HTML/CSS background behind it
+    type: Phaser.CANVAS,
   transparent: true,
   backgroundColor: "rgba(0,0,0,0)",
   // Pixel-art friendly settings
