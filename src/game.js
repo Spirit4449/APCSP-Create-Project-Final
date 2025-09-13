@@ -142,7 +142,9 @@ function prewarmTextures(scene) {
     for (const key of keys) {
       if (!scene.textures.exists(key)) continue;
       // Heuristic: atlases are fine as sprites; plain images as images
-      const isAtlas = !!scene.textures.get(key)?.frameTotal && scene.textures.get(key).frameTotal > 1;
+      const isAtlas =
+        !!scene.textures.get(key)?.frameTotal &&
+        scene.textures.get(key).frameTotal > 1;
       let obj = null;
       if (isAtlas) {
         obj = scene.add.sprite(-9999, -9999, key);
@@ -157,7 +159,9 @@ function prewarmTextures(scene) {
     // Destroy on next tick once GL textures are created
     scene.time.delayedCall(0, () => {
       for (const o of spawned) {
-        try { o.destroy(); } catch (_) {}
+        try {
+          o.destroy();
+        } catch (_) {}
       }
     });
   } catch (_) {}
@@ -325,8 +329,9 @@ function setupGameEventListeners() {
     // Mark if game is already live (late join)
     try {
       const status = String(gameState?.status || "").toLowerCase();
-      isLiveGame = status === "active" || status === "started" || status === "running";
-      console.log(isLiveGame, "is live")
+      isLiveGame =
+        status === "active" || status === "started" || status === "running";
+      console.log(isLiveGame, "is live");
     } catch (_) {}
 
     // Capture server-provided spawn index/version if present
@@ -653,7 +658,7 @@ class GameScene extends Phaser.Scene {
       updateLoading(95, "Assets loaded");
       // If we joined early (not yet starting) and the game is NOT live, keep overlay up
       if (!isLiveGame) {
-        console.log("Not a live game")
+        console.log("Not a live game");
         showBattleStartOverlay(gameData?.players || []);
       } else {
       }
@@ -705,8 +710,8 @@ class GameScene extends Phaser.Scene {
   create() {
     // Store scene reference
     gameScene = this;
-  // Don't let players move until game is fully ready (unless late-joining a live game)
-  this.input.keyboard.enabled = false;
+    // Don't let players move until game is fully ready (unless late-joining a live game)
+    this.input.keyboard.enabled = false;
     this.physics.world.setBoundsCollision(false, false, false, false);
     // Wait for game data before creating map and player
     if (!gameData) {
@@ -752,8 +757,8 @@ class GameScene extends Phaser.Scene {
     // Ensure all character animations are registered for this scene
     setupAll(this);
 
-  // Force-create GL textures for common attack assets across characters
-  prewarmTextures(this);
+    // Force-create GL textures for common attack assets across characters
+    prewarmTextures(this);
 
     // Background music: play once (2:30 track), no loop, but only after audio unlock (user gesture)
     this._bgmStarted = false;
