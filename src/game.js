@@ -759,7 +759,11 @@ class GameScene extends Phaser.Scene {
 
     // Prewarm textures is only meaningful for WebGL (uploads to GPU)
     try {
-      if (this.game && this.game.config && this.game.config.renderType === Phaser.WEBGL) {
+      if (
+        this.game &&
+        this.game.config &&
+        this.game.config.renderType === Phaser.WEBGL
+      ) {
         prewarmTextures(this);
       }
     } catch (_) {}
@@ -1325,8 +1329,8 @@ class GameScene extends Phaser.Scene {
 }
 
 const config = {
-    // Force Canvas renderer; enable transparency so the canvas can show the HTML/CSS background behind it
-    type: Phaser.CANVAS,
+  // Force Canvas renderer; enable transparency so the canvas can show the HTML/CSS background behind it
+  type: Phaser.CANVAS,
   transparent: true,
   backgroundColor: "rgba(0,0,0,0)",
   // Pixel-art friendly settings
