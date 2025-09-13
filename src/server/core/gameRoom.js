@@ -42,6 +42,15 @@ class GameRoom {
     // Versioning for idempotent spawns on clients
     this.spawnVersion = Date.now();
 
+    // Handshake before game start
+    this._requiredUserIds = new Set(
+      (Array.isArray(matchData?.players) ? matchData.players : []).map(
+        (p) => p.user_id
+      )
+    );
+    this._readyAcks = new Set(); // user_id set
+    this._startTimeout = null; // NodeJS timer for starting phase
+
     console.log(
       `[GameRoom ${matchId}] Created for mode ${matchData.mode}, map ${matchData.map}`
     );
@@ -132,7 +141,7 @@ class GameRoom {
       this.players.size === this.matchData.players.length &&
       this.status === "waiting"
     ) {
-      this.startGame();
+      this.potentialStartGame();
     }
   }
 
@@ -193,6 +202,32 @@ class GameRoom {
       // This will be handled by the main socket disconnect handler
       // which calls gameHub.handlePlayerLeave
     });
+
+    // Client signals they're ready to start (assets + scene loaded)
+    socket.on("game:ready", () => {
+      try {
+        if (this.status !== "starting") return;
+        const p = this.players.get(socket.id);
+        if (!p || !p.user_id) return;
+        // Track by user_id (robust to reconnection)
+        if (!this._readyAcks.has(p.user_id)) {
+          this._readyAcks.add(p.user_id);
+          const need = this._requiredUserIds.size;
+          const have = this._readyAcks.size;
+          console.log(
+            `[GameRoom ${this.matchId}] Ready ack from ${p.name} (${have}/${need})`
+          );
+          if (have >= need) {
+            this._finalizeStart("all_acks");
+          }
+        }
+      } catch (e) {
+        console.warn(
+          `[GameRoom ${this.matchId}] game:ready handler error`,
+          e?.message
+        );
+      }
+    });
   }
 
   /**
@@ -242,6 +277,55 @@ class GameRoom {
     };
     console.log("Emitting initial game state to player", gameStateForPlayer);
     socket.emit("game:init", gameStateForPlayer);
+  }
+
+  /**
+   * Enter a 10s starting phase where clients load and ack readiness.
+   * If all acks received sooner, start immediately; otherwise start on timeout.
+   */
+  potentialStartGame() {
+    if (this.status !== "waiting") return; // only transition from waiting
+    this.status = "starting";
+    this._readyAcks = new Set();
+    console.log(
+      `[GameRoom ${this.matchId}] Entering starting phase (10s timeout)`
+    );
+
+    // Announce starting phase to clients (UI can show VS overlay)
+    this.io.to(`game:${this.matchId}`).emit("game:starting", {
+      timeoutMs: 10000,
+      at: Date.now(),
+    });
+
+    // Safety timeout: start even if not all clients ack
+    if (this._startTimeout) {
+      try {
+        clearTimeout(this._startTimeout);
+      } catch (_) {}
+    }
+    this._startTimeout = setTimeout(() => {
+      this._finalizeStart("timeout");
+    }, 10000);
+  }
+
+  /**
+   * Finalize start after all acks or timeout.
+   * @param {"all_acks"|"timeout"} reason
+   */
+  _finalizeStart(reason = "timeout") {
+    if (this.status !== "starting") return; // idempotent guard
+    if (this._startTimeout) {
+      try {
+        clearTimeout(this._startTimeout);
+      } catch (_) {}
+      this._startTimeout = null;
+    }
+    const have = this._readyAcks?.size || 0;
+    const need = this._requiredUserIds?.size || 0;
+    console.log(
+      `[GameRoom ${this.matchId}] Finalizing start (reason=${reason}) acks=${have}/${need}`
+    );
+    this.startGame();
   }
 
   /**
@@ -312,9 +396,17 @@ class GameRoom {
         step(nowMono);
         acc -= this.FIXED_DT_MS;
       }
-      setImmediate(loop);
+      // Yield a bit to avoid busy-spinning the CPU.
+      // Sleep roughly until the next tick is due (at least 0–1ms).
+      let sleepMs = 0;
+      if (acc < this.FIXED_DT_MS) {
+        sleepMs = Math.max(0, Math.floor(this.FIXED_DT_MS - acc));
+        // Ensure we yield to the event loop at least briefly
+        if (sleepMs === 0) sleepMs = 1;
+      }
+      setTimeout(loop, sleepMs);
     };
-    setImmediate(loop);
+    setTimeout(loop, 0);
   }
 
   _emitSnapshotWithTiming(snapMono) {

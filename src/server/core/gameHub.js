@@ -102,11 +102,8 @@ function createGameHub({ io, db }) {
 
     try {
       await room.removePlayer(socket, user);
-
-      // If room is empty, clean it up
-      if (room.getPlayerCount() === 0) {
-        removeGameRoom(matchId);
-      }
+      // If room is empty, clean it up immediately
+      if (room.getPlayerCount() === 0) removeGameRoom(matchId);
     } catch (error) {
       console.error(
         `[GameHub] Error removing player ${user.name} from room ${matchId}:`,

@@ -155,6 +155,8 @@ function initSocket({ io, COOKIE_SECRET, db }) {
         if (ok) {
           cb?.({ ok: true, matchId });
           socket.emit("game:joined", { ok: true, matchId });
+          // Track which game this socket is in for reliable leave handling
+          socket.data.gameMatchId = matchId;
           console.log("[game:join] ok", {
             sid: socket.id,
             user: user.name,
@@ -364,6 +366,14 @@ function initSocket({ io, COOKIE_SECRET, db }) {
 
     // Proactive offline on tab close/navigation
     socket.on("client:bye", async () => {
+      // If this socket is in a game, proactively leave the game room now
+      try {
+        const mid = socket.data.gameMatchId;
+        if (mid) {
+          await gameHub.handlePlayerLeave(socket, mid);
+          socket.data.gameMatchId = null;
+        }
+      } catch (_) {}
       const uname = socket.data.user?.name;
       if (!uname) return;
       const t = pendingOffline.get(uname);
@@ -573,7 +583,18 @@ function initSocket({ io, COOKIE_SECRET, db }) {
 
       if (!username) return;
 
-      // Check if user is in a live match before cleaning up game rooms
+      // Always detach from any game room this socket joined
+      try {
+        const mid = socket.data.gameMatchId;
+        if (mid) {
+          await gameHub.handlePlayerLeave(socket, mid);
+          socket.data.gameMatchId = null;
+        }
+      } catch (e) {
+        console.warn("leave game on disconnect failed:", e?.message);
+      }
+
+      // Check if user is in a live match before broader cleanups (queue etc.)
       try {
         const liveMatches = await db.runQuery(
           `SELECT m.match_id FROM matches m 
@@ -583,13 +604,7 @@ function initSocket({ io, COOKIE_SECRET, db }) {
           [username]
         );
 
-        if (liveMatches.length === 0) {
-          // No live matches, safe to clean up game rooms
-          const stats = gameHub.getStats();
-          for (const roomInfo of stats.rooms) {
-            await gameHub.handlePlayerLeave(socket, roomInfo.matchId);
-          }
-        } else {
+        if (liveMatches.length > 0) {
           console.log(
             `[disconnect] user=${username} has live match, not cleaning up game rooms yet`
           );

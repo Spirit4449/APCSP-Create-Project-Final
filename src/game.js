@@ -85,7 +85,9 @@ let gameEnded = false; // stops update loop network emissions after game over
 let gameInitialized = false; // track if game has been initialized
 let hasJoined = false;
 let joinInFlight = false; // prevent duplicate in-flight join emits
-let battleState = null; // track if the game has started to suppress pre-start UI
+let startingPhase = false; // server announced starting phase
+let readyAckSent = false; // ensure single ready ack
+let isLiveGame = false; // server reported active game (late join)
 // Spawn coordination
 let SPAWN_VERSION = 0; // increments per scene init to version spawns
 const SERVER_SPAWN_INDEX = Object.create(null); // name -> spawnIndex (if server provided)
@@ -183,7 +185,6 @@ async function initializeGame() {
 // Battle Start Overlay (static DOM in game.html)
 // -----------------------------
 function showBattleStartOverlay(players) {
-  if (battleState !== "waiting") return null;
   const root = document.getElementById("battle-start-overlay");
   if (!root) return null;
 
@@ -283,9 +284,11 @@ function setupGameEventListeners() {
       status: gameState?.status,
     });
     gameInitialized = true;
-    console.log(gameState.status)
-    battleState = String(gameState?.status || "waiting").toLocaleLowerCase();
-    // init received; no further rejoin attempts needed
+    // Mark if game is already live (late join)
+    try {
+      const status = String(gameState?.status || "").toLowerCase();
+      isLiveGame = status === "active" || status === "started" || status === "running";
+    } catch (_) {}
 
     // Capture server-provided spawn index/version if present
     try {
@@ -322,9 +325,16 @@ function setupGameEventListeners() {
   // Game start countdown
   socket.on("game:start", (data) => {
     console.log("Game starting:", data);
-    battleState = "active";
     // Start the countdown animation
     startCountdown();
+  });
+
+  // Server indicates starting phase (10s window)
+  socket.on("game:starting", (payload) => {
+    console.log("Game starting phase:", payload);
+    startingPhase = true;
+    showBattleStartOverlay(gameData.players);
+    trySendReadyAck();
   });
 
   // No periodic join retries needed; reconnect handler covers transient drops
@@ -602,6 +612,13 @@ class GameScene extends Phaser.Scene {
 
     this.load.once("complete", () => {
       updateLoading(95, "Assets loaded");
+      // If we joined early (not yet starting) and the game is NOT live, keep overlay up
+      if (!isLiveGame) {
+        console.log("Not a live game")
+        showBattleStartOverlay(gameData?.players || []);
+      } else {
+      }
+      // Do not enable input here; input will be enabled on game:start or immediately if already live
     });
 
     // Character assets (preload all registered characters)
@@ -649,7 +666,8 @@ class GameScene extends Phaser.Scene {
   create() {
     // Store scene reference
     gameScene = this;
-
+  // Don't let players move until game is fully ready (unless late-joining a live game)
+  this.input.keyboard.enabled = false;
     this.physics.world.setBoundsCollision(false, false, false, false);
     // Wait for game data before creating map and player
     if (!gameData) {
@@ -668,6 +686,15 @@ class GameScene extends Phaser.Scene {
     }
 
     this.initializeGameWorld();
+
+    // If joining a live game, enable controls right away (no overlay/countdown)
+    if (isLiveGame) {
+      this.input.keyboard.enabled = true;
+    }
+
+    // Scene is now ready; if server is in starting phase, ack readiness
+    trySendReadyAck();
+    updateLoading(100, "Starting...");
   }
 
   initializeGameWorld() {
@@ -834,15 +861,6 @@ class GameScene extends Phaser.Scene {
       // Add collider between the object and each map object
       this.physics.add.collider(player, mapObject);
     });
-    updateLoading(100, "Starting...");
-    // Show battle start overlay with player info if match hasn't started
-    const alreadyLive =
-      battleState === "active" ||
-      battleState === "started" ||
-      battleState === "running";
-    if (!alreadyLive && Array.isArray(gameData.players)) {
-      showBattleStartOverlay(gameData.players);
-    }
   }
 
   initializeOtherPlayers() {
@@ -1265,6 +1283,7 @@ const config = {
   roundPixels: false, // allow subpixel rendering for smoother interpolation (adaptive timeline)
   antialias: false,
   resolution: window.devicePixelRatio,
+  disableVisibilityChange: true, // keep running when tab is unfocused
   scale: {
     // Makes sure the game looks good on all screens
     mode: Phaser.Scale.FIT,
@@ -1286,6 +1305,18 @@ const config = {
 const game = new Phaser.Game(config);
 
 export { opponentPlayers, teamPlayers };
+
+// Emit a one-time game:ready ack when both scene and startingPhase are true
+function trySendReadyAck() {
+  if (readyAckSent) return;
+  const sceneReady = !!gameScene && !!player; // player created implies scene ready
+  if (!sceneReady || !startingPhase) return;
+  try {
+    readyAckSent = true;
+    socket.emit("game:ready", { matchId: Number(matchId) });
+    console.log("Sent game:ready ack");
+  } catch (_) {}
+}
 
 function startCountdown() {
   const countdownEl = document.getElementById("countdown-display");
@@ -1318,6 +1349,11 @@ function startCountdown() {
 
       setTimeout(() => {
         hideBattleStartOverlay();
+        try {
+          if (gameScene && gameScene.input?.keyboard) {
+            gameScene.input.keyboard.enabled = true;
+          }
+        } catch (_) {}
       }, 1000);
     }
   };
