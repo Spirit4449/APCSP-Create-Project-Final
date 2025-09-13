@@ -156,6 +156,7 @@ export default class ReturningShuriken extends Phaser.Physics.Arcade.Image {
   }
 
   spawnTrail() {
+    if (!this.scene.textures.exists("shuriken")) return;
     const s = this.scene.add.image(this.x, this.y, "shuriken");
     s.setScale(this.cfg.scale * 0.4);
     s.setDepth(4);

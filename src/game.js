@@ -125,6 +125,44 @@ let lastAdaptivePrint = 0;
 // Game scene reference
 let gameScene = null;
 
+// Prewarm frequently used textures to force GL upload before gameplay
+function prewarmTextures(scene) {
+  try {
+    const keys = [
+      // Character main atlases
+      "ninja",
+      "draven",
+      "thorg",
+      // Attack visuals
+      "draven-explosion",
+      "shuriken",
+      "thorg-weapon",
+    ];
+    const spawned = [];
+    for (const key of keys) {
+      if (!scene.textures.exists(key)) continue;
+      // Heuristic: atlases are fine as sprites; plain images as images
+      const isAtlas = !!scene.textures.get(key)?.frameTotal && scene.textures.get(key).frameTotal > 1;
+      let obj = null;
+      if (isAtlas) {
+        obj = scene.add.sprite(-9999, -9999, key);
+      } else {
+        obj = scene.add.image(-9999, -9999, key);
+      }
+      if (obj) {
+        obj.setVisible(false);
+        spawned.push(obj);
+      }
+    }
+    // Destroy on next tick once GL textures are created
+    scene.time.delayedCall(0, () => {
+      for (const o of spawned) {
+        try { o.destroy(); } catch (_) {}
+      }
+    });
+  } catch (_) {}
+}
+
 // Fetch game data from server
 async function fetchGameData() {
   try {
@@ -288,6 +326,7 @@ function setupGameEventListeners() {
     try {
       const status = String(gameState?.status || "").toLowerCase();
       isLiveGame = status === "active" || status === "started" || status === "running";
+      console.log(isLiveGame, "is live")
     } catch (_) {}
 
     // Capture server-provided spawn index/version if present
@@ -712,6 +751,9 @@ class GameScene extends Phaser.Scene {
 
     // Ensure all character animations are registered for this scene
     setupAll(this);
+
+  // Force-create GL textures for common attack assets across characters
+  prewarmTextures(this);
 
     // Background music: play once (2:30 track), no loop, but only after audio unlock (user gesture)
     this._bgmStarted = false;
