@@ -1062,13 +1062,11 @@ function setReadyButtonState(isCancel) {
 }
 
 function syncReadyButtonFromSelfSlot() {
-  const selfSlot = Array.from(document.querySelectorAll(".character-slot")).find(
-    (s) => s.dataset.isCurrentUser === "true"
-  );
+  const selfSlot = Array.from(
+    document.querySelectorAll(".character-slot")
+  ).find((s) => s.dataset.isCurrentUser === "true");
   const statusEl = selfSlot?.querySelector(".status");
   if (!statusEl) return;
-  const isReady = (statusEl.textContent || "")
-    .toLowerCase()
-    .includes("ready");
+  const isReady = (statusEl.textContent || "").toLowerCase().includes("ready");
   setReadyButtonState(isReady);
 }
