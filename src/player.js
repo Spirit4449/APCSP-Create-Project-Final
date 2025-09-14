@@ -441,7 +441,8 @@ export function handlePlayerMovement(scene) {
     const worldG = scene.physics?.world?.gravity?.y || 0;
     const isAirborne = !player.body.touching.down;
     const isFalling = (player.body.velocity.y || 0) > 5;
-    const touchingWall = player.body.touching.left || player.body.touching.right;
+    const touchingWall =
+      player.body.touching.left || player.body.touching.right;
     if (isAirborne && isFalling && !touchingWall && fallGravityFactor > 1) {
       // Additive per-body gravity so total ~= worldG * fallGravityFactor
       player.body.setGravityY(worldG * (fallGravityFactor - 1));

@@ -66,7 +66,10 @@ class draven {
             // Keep natural order if possible (assumes TexturePacker export is already ordered)
             scene.anims.create({
               key: `${NAME}-explosion`,
-              frames: filtered.map((f) => ({ key: `${NAME}-explosion`, frame: f })),
+              frames: filtered.map((f) => ({
+                key: `${NAME}-explosion`,
+                frame: f,
+              })),
               frameRate: 28,
               repeat: 0,
             });

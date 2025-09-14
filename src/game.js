@@ -327,7 +327,7 @@ function setupGameEventListeners() {
       players: Array.isArray(gameState?.players) ? gameState.players.length : 0,
       status: gameState?.status,
     });
-  gameInitialized = true;
+    gameInitialized = true;
     // Mark if game is already live (late join)
     try {
       const status = String(gameState?.status || "").toLowerCase();
@@ -787,11 +787,17 @@ class GameScene extends Phaser.Scene {
             const { playerName, character, action } = pkt || {};
             if (!playerName || !action) continue;
             if (playerName === username) continue;
-            const pd = (gameData.players || []).find((p) => p.name === playerName);
+            const pd = (gameData.players || []).find(
+              (p) => p.name === playerName
+            );
             const isTeammate = pd && pd.team === gameData.yourTeam;
             const container = isTeammate ? teamPlayers : opponentPlayers;
             const wrapper = container[playerName];
-            const charKey = (character || (pd && pd.char_class) || "").toLowerCase();
+            const charKey = (
+              character ||
+              (pd && pd.char_class) ||
+              ""
+            ).toLowerCase();
             const act = { ...(action || {}) };
             if (wrapper && wrapper.opponent) {
               act.x = wrapper.opponent.x;
