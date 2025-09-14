@@ -62,7 +62,7 @@ export function performDravenSplashAttack(instance) {
   // Play fireball SFX (local-only)
   try {
     if (scene.sound) {
-      scene.sound.play("draven-fireball", { volume: 0.18 });
+      scene.sound.play("draven-fireball", { volume: 0.4 });
     }
   } catch (_) {}
 
@@ -202,7 +202,7 @@ function applySplashDamage({
   }
   if (hitAny) {
     try {
-      scene.sound.play("draven-hit", { volume: 0.18 });
+      scene.sound.play("draven-hit", { volume: 0.8 });
     } catch (_) {}
     return { newHits };
   }
@@ -210,15 +210,29 @@ function applySplashDamage({
 }
 
 export function spawnExplosion(scene, x, y) {
-  if (!scene.textures.exists("draven-explosion")) return null;
-  const e = scene.add.sprite(x, y, "draven-explosion");
-  e.setDepth(9);
-  e.setScale(2.2);
-  if (scene.anims.exists("draven-explosion")) {
-    e.anims.play("draven-explosion");
+  try {
+    if (!scene || !scene.add || !scene.textures?.exists("draven-explosion")) {
+      return null;
+    }
+    const e = scene.add.sprite(x, y, "draven-explosion");
+    e.setDepth(9);
+    e.setScale(2.2);
+    if (scene.anims?.exists("draven-explosion")) {
+      e.anims.play("draven-explosion");
+      e.once("animationcomplete", () => e.destroy());
+    } else {
+      // No animation defined; fade out and destroy for a minimal visual cue
+      scene.tweens?.add({
+        targets: e,
+        alpha: 0,
+        duration: 200,
+        onComplete: () => e.destroy(),
+      });
+    }
+    return e;
+  } catch (_) {
+    return null;
   }
-  e.once("animationcomplete", () => e.destroy());
-  return e;
 }
 
 export function changeDebugState(state) {

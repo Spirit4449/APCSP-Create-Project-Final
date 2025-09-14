@@ -11,6 +11,7 @@ export default class ReturningShuriken extends Phaser.Physics.Arcade.Image {
    * @param {Object} config
    */
   constructor(scene, startPos, ownerSprite, config) {
+    // Create image and guard against missing texture; make invisible until ready
     super(scene, startPos.x, startPos.y, "shuriken");
     this.ownerSprite = ownerSprite;
     this.cfg = Object.assign(
@@ -45,6 +46,26 @@ export default class ReturningShuriken extends Phaser.Physics.Arcade.Image {
     this.trailAccum = 0;
     this.trails = [];
     this.maxTrails = 40;
+
+    // If texture isn't ready yet (edge case), keep invisible and set once available
+    try {
+      const hasTex = scene.textures?.exists("shuriken");
+      if (!hasTex) {
+        this.setVisible(false);
+        const tryBind = () => {
+          try {
+            if (scene.textures?.exists("shuriken")) {
+              this.setTexture("shuriken");
+              this.setVisible(true);
+            }
+          } catch (_) {}
+        };
+        scene.load?.once(Phaser.Loader.Events.COMPLETE, tryBind);
+        scene.textures?.once(Phaser.Textures.Events.ADD, (key) => {
+          if (key === "shuriken") tryBind();
+        });
+      }
+    } catch (_) {}
 
     // Add to scene / physics
     scene.add.existing(this);
@@ -136,7 +157,7 @@ export default class ReturningShuriken extends Phaser.Physics.Arcade.Image {
     });
     // Play hit SFX locally for the owner
     try {
-      this.scene.sound.play("shurikenHit", { volume: 0.1, rate: 1.0 });
+      this.scene.sound.play("shurikenHit", { volume: 1, rate: 1.0 });
     } catch (e) {}
     return true;
   }

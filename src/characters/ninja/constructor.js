@@ -43,6 +43,13 @@ class Ninja {
     // Support returning shuriken as emitted by local Ninja.attack()
     if (data.returning) {
       const ownerSprite = ownerWrapper ? ownerWrapper.opponent : null;
+      // Play remote throw SFX for other players
+      try {
+        const sfx = scene.sound.add("shurikenThrow");
+        sfx.setVolume(1);
+        sfx.setRate(1.3);
+        sfx.play();
+      } catch (_) {}
       // Instantiate a non-owner returning shuriken so visuals match
       const shuriken = new ReturningShuriken(
         scene,
@@ -64,15 +71,17 @@ class Ninja {
     }
 
     // Fallback for simple projectiles if ever used
-    const proj = scene.physics.add.image(
-      data.x,
-      data.y,
-      data.weapon || "shuriken"
-    );
-    proj.setScale(data.scale || 0.1);
-    proj.setVelocity((data.direction || 1) * 400, 0);
-    proj.setAngularVelocity(data.rotationSpeed || 600);
-    proj.body.allowGravity = false;
+    const key = data.weapon || "shuriken";
+    if (scene.textures?.exists(key)) {
+      const proj = scene.physics.add.image(data.x, data.y, key);
+      proj.setScale(data.scale || 0.1);
+      proj.setVelocity((data.direction || 1) * 400, 0);
+      proj.setAngularVelocity(data.rotationSpeed || 600);
+      proj.body.allowGravity = false;
+    } else {
+      // Texture not ready; skip visual to avoid null render errors
+      // Optionally, could queue a retry later if needed.
+    }
     return true;
   }
 
@@ -144,7 +153,7 @@ class Ninja {
     const fired = this.performDefaultAttack(() => {
       // Play throw anim and sfx
       const sfx = this.scene.sound.add("shurikenThrow");
-      sfx.setVolume(0.1);
+      sfx.setVolume(1);
       sfx.setRate(1.3);
       sfx.play();
       if (

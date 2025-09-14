@@ -26,6 +26,8 @@ import { spawnDust } from "./effects";
 // Globals
 let player;
 let cursors;
+let keySpace; // Spacebar for jump
+let keyJ; // J for attack
 let canWallJump = true;
 let isMoving = false;
 let isJumping = false;
@@ -79,6 +81,7 @@ const dustInterval = 70; // ms between dust puffs when running
 let bodyConfig = null;
 let applyFlipOffsetLocal = null;
 let charEffects = null; // per-character, per-player effects handler (e.g., Draven fire)
+let charCtrl = null; // active character controller instance
 
 // Create player function
 export function createPlayer(
@@ -102,6 +105,17 @@ export function createPlayer(
   currentCharacter = character;
   pdbg();
   cursors = scene.input.keyboard.createCursorKeys();
+  // Bind additional keys once
+  try {
+    keySpace = scene.input.keyboard.addKey(
+      Phaser.Input.Keyboard.KeyCodes.SPACE
+    );
+    keyJ = scene.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.J);
+  } catch (e) {
+    // Fallback to string names if KeyCodes not available (shouldn't happen in Phaser 3)
+    keySpace = scene.input.keyboard.addKey("SPACE");
+    keyJ = scene.input.keyboard.addKey("J");
+  }
 
   // Animations are registered globally in game.js via setupAll(scene)
 
@@ -264,6 +278,7 @@ export function createPlayer(
     mapObjects,
     ammoHooks,
   });
+  charCtrl = ctrl;
   if (ctrl && ctrl.attachInput) ctrl.attachInput();
 
   // Per-character effects: instantiate if the character provides an Effects class
@@ -390,7 +405,7 @@ export function handlePlayerMovement(scene) {
   // - jumpBoost: small bonus based on current horizontal speed (running jumps feel punchier).
   const jumpBoost = 10;
   // - coyoteTimeMs: grace window to jump just after leaving a ledge (more forgiving platforming).
-  const coyoteTimeMs = 90;
+  const coyoteTimeMs = 130;
   // - wallJumpCooldownMs: delay before another wall jump is allowed.
   const wallJumpCooldownMs = 320;
   // - wallSlideMaxFallSpeed: cap downward speed while touching a wall (slower slide).
@@ -398,6 +413,8 @@ export function handlePlayerMovement(scene) {
   // - wallKickLockMs: short window after a wall jump where opposite input is ignored
   //   so the horizontal kick isn't immediately canceled by collisions or input.
   const wallKickLockMs = 160;
+  // - fallGravityFactor: gravity multiplier while falling (fast-fall). 1.0 = off.
+  const fallGravityFactor = 1.35;
   // Ensure body uses our drag settings once
   if (player.body) {
     const onGround = player.body.touching.down;
@@ -414,7 +431,38 @@ export function handlePlayerMovement(scene) {
     cursors.left.isDown || scene.input.keyboard.addKey("A").isDown;
   const rightKey =
     cursors.right.isDown || scene.input.keyboard.addKey("D").isDown;
-  const upKey = cursors.up.isDown || scene.input.keyboard.addKey("W").isDown;
+  const upKey =
+    cursors.up.isDown ||
+    scene.input.keyboard.addKey("W").isDown ||
+    (keySpace && keySpace.isDown);
+
+  // Fast-fall gravity: apply extra gravity only when falling (vy > 0) and airborne.
+  try {
+    const worldG = scene.physics?.world?.gravity?.y || 0;
+    const isAirborne = !player.body.touching.down;
+    const isFalling = (player.body.velocity.y || 0) > 5;
+    const touchingWall = player.body.touching.left || player.body.touching.right;
+    if (isAirborne && isFalling && !touchingWall && fallGravityFactor > 1) {
+      // Additive per-body gravity so total ~= worldG * fallGravityFactor
+      player.body.setGravityY(worldG * (fallGravityFactor - 1));
+    } else {
+      // Reset any extra gravity when not falling
+      player.body.setGravityY(0);
+    }
+  } catch (_) {}
+
+  // Handle attack on J (edge-triggered)
+  try {
+    if (keyJ && Phaser.Input.Keyboard.JustDown(keyJ) && !dead) {
+      // Prefer a unified attack(direction) if provided; otherwise fall back to pointer-based handler
+      const dir = player && player.flipX ? -1 : 1;
+      if (charCtrl && typeof charCtrl.attack === "function") {
+        charCtrl.attack(dir);
+      } else if (charCtrl && typeof charCtrl.handlePointerDown === "function") {
+        charCtrl.handlePointerDown();
+      }
+    }
+  } catch (_) {}
 
   // Left movement
   if (leftKey) {
@@ -451,7 +499,7 @@ export function handlePlayerMovement(scene) {
       sfxWalkCooldown += scene.game.loop.delta;
       if (sfxWalkCooldown >= 280) {
         sfxWalkCooldown = 0;
-        scene.sound.play("sfx-step", { volume: 0.18 });
+        scene.sound.play("sfx-step", { volume: 2 });
       }
     }
     // Right movement
@@ -488,7 +536,7 @@ export function handlePlayerMovement(scene) {
       sfxWalkCooldown += scene.game.loop.delta;
       if (sfxWalkCooldown >= 280) {
         sfxWalkCooldown = 0;
-        scene.sound.play("sfx-step", { volume: 0.2 });
+        scene.sound.play("sfx-step", { volume: 2 });
       }
     }
   } else {
@@ -512,7 +560,7 @@ export function handlePlayerMovement(scene) {
     const boost = Phaser.Math.Clamp((vx / maxSpeed) * jumpBoost, 0, jumpBoost);
     jumpSpeed = 360 + boost; // slightly higher base for a stronger jump
     jump(); // Calls jump
-    scene.sound.play("sfx-jump", { volume: 0.6 });
+    scene.sound.play("sfx-jump", { volume: 3 });
   } else if (
     // If player is touching a wall while jumping
     (player.body.touching.left || (player.body.touching.right && !dead)) &&
@@ -520,7 +568,7 @@ export function handlePlayerMovement(scene) {
     upKey
   ) {
     wallJump(); // Calls walljump
-    scene.sound.play("sfx-walljump", { volume: 0.9 });
+    scene.sound.play("sfx-walljump", { volume: 4 });
   }
   if (
     (player.body.touching.left || (player.body.touching.right && !dead)) &&
@@ -569,7 +617,7 @@ export function handlePlayerMovement(scene) {
   // Landing detection (transition airborne -> grounded)
   const onGround = player.body.touching.down;
   if (!wasOnGround && onGround && !dead) {
-    scene.sound.play("sfx-land", { volume: 0.8 });
+    scene.sound.play("sfx-land", { volume: 4 });
   }
   wasOnGround = onGround;
   if (onGround) player._lastGroundTime = Date.now();
@@ -724,7 +772,7 @@ socket.on("health-update", (data) => {
       const delta = currentHealth - prev;
       if (delta < 0) {
         // Took damage
-        scene.sound.play("sfx-damage", { volume: 0.1 });
+        scene.sound.play("sfx-damage", { volume: 3 });
       } else if (delta > 0) {
         const s = scene.sound.add("sfx-heal", { volume: 0.1 });
         try {

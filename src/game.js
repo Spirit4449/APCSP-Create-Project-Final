@@ -88,6 +88,8 @@ let joinInFlight = false; // prevent duplicate in-flight join emits
 let startingPhase = false; // server announced starting phase
 let readyAckSent = false; // ensure single ready ack
 let isLiveGame = false; // server reported active game (late join)
+// Buffer for remote actions that arrive before scene is ready
+const PENDING_ACTIONS = [];
 // Spawn coordination
 let SPAWN_VERSION = 0; // increments per scene init to version spawns
 const SERVER_SPAWN_INDEX = Object.create(null); // name -> spawnIndex (if server provided)
@@ -325,7 +327,7 @@ function setupGameEventListeners() {
       players: Array.isArray(gameState?.players) ? gameState.players.length : 0,
       status: gameState?.status,
     });
-    gameInitialized = true;
+  gameInitialized = true;
     // Mark if game is already live (late join)
     try {
       const status = String(gameState?.status || "").toLowerCase();
@@ -333,6 +335,15 @@ function setupGameEventListeners() {
         status === "active" || status === "started" || status === "running";
       console.log(isLiveGame, "is live");
     } catch (_) {}
+    // If already live at init, hide overlay and enable controls immediately
+    if (isLiveGame) {
+      hideBattleStartOverlay();
+      try {
+        if (gameScene && gameScene.input?.keyboard) {
+          gameScene.input.keyboard.enabled = true;
+        }
+      } catch (_) {}
+    }
 
     // Capture server-provided spawn index/version if present
     try {
@@ -366,18 +377,20 @@ function setupGameEventListeners() {
     } catch (_) {}
   });
 
-  // Game start countdown
+  // Game start countdown (only if not already live)
   socket.on("game:start", (data) => {
     console.log("Game starting:", data);
-    // Start the countdown animation
-    startCountdown();
+    if (!isLiveGame) startCountdown();
   });
 
   // Server indicates starting phase (10s window)
   socket.on("game:starting", (payload) => {
     console.log("Game starting phase:", payload);
     startingPhase = true;
-    showBattleStartOverlay(gameData.players);
+    // Only show overlay if not already live
+    if (!isLiveGame) {
+      showBattleStartOverlay(gameData.players);
+    }
     trySendReadyAck();
   });
 
@@ -389,6 +402,13 @@ function setupGameEventListeners() {
     if (!stateActive) {
       stateActive = true;
       console.log("Started receiving server snapshots (tMono/tickId enabled)");
+      // Receiving snapshots implies the match is live; hide any pending overlay.
+      try {
+        hideBattleStartOverlay();
+        if (gameScene && gameScene.input?.keyboard) {
+          gameScene.input.keyboard.enabled = true;
+        }
+      } catch (_) {}
     }
 
     // Calibrate monotonic offset using performance.now() vs server tMono
@@ -515,6 +535,11 @@ function setupGameEventListeners() {
   socket.on("game:action", (packet) => {
     try {
       if (!packet) return;
+      // If scene not ready yet, queue the action to replay shortly
+      if (!gameScene || !gameScene.sys || !gameScene.sys.isActive) {
+        PENDING_ACTIONS.push(packet);
+        return;
+      }
       const { playerName, character, origin, flip, action } = packet;
       if (!playerName || !action) return;
       if (playerName === username) return; // ignore self
@@ -656,13 +681,9 @@ class GameScene extends Phaser.Scene {
 
     this.load.once("complete", () => {
       updateLoading(95, "Assets loaded");
-      // If we joined early (not yet starting) and the game is NOT live, keep overlay up
-      if (!isLiveGame) {
-        console.log("Not a live game");
-        showBattleStartOverlay(gameData?.players || []);
-      } else {
-      }
-      // Do not enable input here; input will be enabled on game:start or immediately if already live
+      // Overlay will be controlled strictly by socket events (game:starting/game:start/init/live)
+      // Do not show here to avoid race with late-arriving init/live status.
+      // Input will be enabled on game:start or immediately if already live.
     });
 
     // Character assets (preload all registered characters)
@@ -757,6 +778,34 @@ class GameScene extends Phaser.Scene {
     // Ensure all character animations are registered for this scene
     setupAll(this);
 
+    // Replay any queued remote actions now that the scene is ready
+    try {
+      if (Array.isArray(PENDING_ACTIONS) && PENDING_ACTIONS.length) {
+        const queued = PENDING_ACTIONS.splice(0, PENDING_ACTIONS.length);
+        for (const pkt of queued) {
+          try {
+            const { playerName, character, action } = pkt || {};
+            if (!playerName || !action) continue;
+            if (playerName === username) continue;
+            const pd = (gameData.players || []).find((p) => p.name === playerName);
+            const isTeammate = pd && pd.team === gameData.yourTeam;
+            const container = isTeammate ? teamPlayers : opponentPlayers;
+            const wrapper = container[playerName];
+            const charKey = (character || (pd && pd.char_class) || "").toLowerCase();
+            const act = { ...(action || {}) };
+            if (wrapper && wrapper.opponent) {
+              act.x = wrapper.opponent.x;
+              act.y = wrapper.opponent.y;
+              if (typeof act.direction !== "number") {
+                act.direction = wrapper.opponent.flipX ? -1 : 1;
+              }
+            }
+            handleRemoteAttack(this, charKey, act, wrapper);
+          } catch (_) {}
+        }
+      }
+    } catch (_) {}
+
     // Prewarm textures is only meaningful for WebGL (uploads to GPU)
     try {
       if (
@@ -778,7 +827,7 @@ class GameScene extends Phaser.Scene {
           const el = new Audio(`${staticPath}/main.mp3`);
           el.preload = "none"; // or 'metadata' to fetch small header first
           el.loop = false; // set to true if you want continuous loop
-          el.volume = 1;
+          el.volume = 0.05;
           // Optional: el.crossOrigin = 'anonymous';
           this._bgmEl = el;
           // Hook into scene lifecycle for cleanup
@@ -1351,7 +1400,7 @@ const config = {
   physics: {
     default: "arcade",
     arcade: {
-      gravity: { y: 750 },
+      gravity: { y: 950 },
       debug: false,
     },
   },

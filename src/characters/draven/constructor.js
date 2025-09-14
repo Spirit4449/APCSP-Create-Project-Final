@@ -54,18 +54,25 @@ class draven {
     animations(scene);
     // Create explosion animation once
     if (!scene.anims.exists(`${NAME}-explosion`)) {
-      const tex = scene.textures.get(`${NAME}-explosion`);
-      if (tex) {
-        const frames = tex.getFrameNames().filter((f) => /explosion/i.test(f));
-        if (frames.length) {
-          scene.anims.create({
-            key: `${NAME}-explosion`,
-            frames: frames.map((f) => ({ key: `${NAME}-explosion`, frame: f })),
-            frameRate: 28,
-            repeat: 0,
-          });
+      try {
+        const tex = scene.textures.get(`${NAME}-explosion`);
+        if (tex && typeof tex.getFrameNames === "function") {
+          let names = tex.getFrameNames();
+          if (!Array.isArray(names)) names = [];
+          // Prefer frames containing "explosion"; fallback to all frames if filter is empty
+          let filtered = names.filter((f) => /explosion/i.test(String(f)));
+          if (!filtered.length) filtered = names.slice();
+          if (filtered.length) {
+            // Keep natural order if possible (assumes TexturePacker export is already ordered)
+            scene.anims.create({
+              key: `${NAME}-explosion`,
+              frames: filtered.map((f) => ({ key: `${NAME}-explosion`, frame: f })),
+              frameRate: 28,
+              repeat: 0,
+            });
+          }
         }
-      }
+      } catch (_) {}
     }
   }
 
@@ -74,6 +81,10 @@ class draven {
     if (!data || data.type !== "draven-splash") return false;
     const ownerSprite = ownerWrapper && ownerWrapper.opponent;
     if (!ownerSprite) return true; // nothing to draw
+    // Play remote attack start SFX (mirror owner's throw)
+    try {
+      scene.sound && scene.sound.play("draven-fireball", { volume: 0.4 });
+    } catch (_) {}
     const delay = data.delay || 500;
     const tipOffset = data.tipOffset || 90;
     // Removed opponent-side debug splash rectangle; only show final explosion now
@@ -83,6 +94,10 @@ class draven {
       const ex = ownerSprite.x + (dir > 0 ? tipOffset : -tipOffset);
       const ey = ownerSprite.y - ownerSprite.height * 0.15;
       spawnExplosion(scene, ex, ey);
+      // Optional impact SFX on remote explosion
+      try {
+        scene.sound && scene.sound.play("draven-hit", { volume: 0.5 });
+      } catch (_) {}
     });
     return true;
   }
