@@ -4,7 +4,7 @@ import socket from "../../socket";
 const SPLASH_W = 165;
 const SPLASH_H = 130; // Tuned final max height
 const ACTIVE_WINDOW_MS = 450; // Attack stays active this long (moving with player)
-const FLIP_UNLOCK_MS = 600; // Facing locked for full active window
+const FLIP_UNLOCK_MS = 530; // Facing locked for full active window
 const DAMAGE_TICK_MS = 90; // Damage cadence
 const DAMAGE_START_MS = 100; // Telegraph before any damage
 const TIP_OFFSET = 50; // Horizontal distance from player center to splash center

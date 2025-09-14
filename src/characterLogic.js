@@ -235,9 +235,17 @@ function createCharacterCard(character, userData) {
     card.classList.add("locked");
   } else if (!isMaxed) {
     const price = upgradePrice(level);
+    const coins = Number(userData?.coins || 0);
+    const affordable = coins >= price;
     const upgradeBtn = document.createElement("button");
-    upgradeBtn.className = "upgrade-button gleam";
+    upgradeBtn.className = `upgrade-button${
+      affordable ? " gleam" : " disabled"
+    }`;
     upgradeBtn.innerHTML = `<img class="upgrade-icon" src="/assets/upgrade.webp" alt="" onerror="this.style.display='none'"/> <span>Upgrade</span> <span class="button-price"><img class="cs-currency" src="/assets/coin.webp" alt=""/> ${price}</span>`;
+    if (!affordable) {
+      // Keep clickable to show insufficient funds dialog; only change visuals
+      upgradeBtn.title = "Not enough coins";
+    }
     upgradeBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       showConfirmDialog({ type: "upgrade", character, level, price }, () =>
@@ -533,6 +541,10 @@ function rerenderCharacterCard(character, userData, animType) {
   const newCard = createCharacterCard(character, userData);
   grid.replaceChild(newCard, oldCard);
   playCardSuccessAnimation(newCard, animType);
+  // After any change, also refresh other buttons' affordability
+  try {
+    refreshUpgradeButtonAffordability();
+  } catch {}
 }
 
 function playCardSuccessAnimation(cardEl, type) {
@@ -583,6 +595,10 @@ function applyUpgrade(character, currentLevel) {
         // Re-render the specific card and play animation
         rerenderCharacterCard(character, _userDataRef || {}, "upgrade");
         document.getElementById("coin-count").textContent = _userDataRef.coins;
+        // After coins change, ensure other upgrade buttons reflect affordability
+        try {
+          refreshUpgradeButtonAffordability();
+        } catch {}
       } else {
         showErrorDialog(data.error || "Upgrade failed.");
       }
@@ -620,6 +636,10 @@ function applyUnlock(character, price) {
         } catch (_) {}
         rerenderCharacterCard(character, _userDataRef || {}, "unlock");
         document.getElementById("gem-count").textContent = _userDataRef.gems;
+        // Unlock can change coins indirectly in some flows; refresh anyway
+        try {
+          refreshUpgradeButtonAffordability();
+        } catch {}
       } else {
         showErrorDialog(data.error || "Unlock failed.");
       }
@@ -627,4 +647,35 @@ function applyUnlock(character, price) {
     .catch((error) => {
       showErrorDialog(error?.message || "Network error.");
     });
+}
+
+// Re-evaluate all visible upgrade buttons against current coin balance
+function refreshUpgradeButtonAffordability() {
+  const coins = Number(_userDataRef?.coins || 0);
+  const grid = document.querySelector(".characters-grid");
+  if (!grid) return;
+  const cards = grid.querySelectorAll(".character-card");
+  cards.forEach((card) => {
+    try {
+      const char = card.dataset.char;
+      if (!char) return;
+      const levels = (_userDataRef && _userDataRef.char_levels) || {};
+      const level = Number(levels[char] ?? 0);
+      if (level <= 0) return; // locked handled by its own button
+      if (level >= LEVEL_CAP) return; // maxed, no upgrade button
+      const price = upgradePrice(level);
+      const btn = card.querySelector(".upgrade-button");
+      if (!btn) return;
+      const affordable = coins >= price;
+      if (affordable) {
+        btn.classList.add("gleam");
+        btn.classList.remove("disabled");
+        btn.title = "";
+      } else {
+        btn.classList.remove("gleam");
+        btn.classList.add("disabled");
+        btn.title = "Not enough coins";
+      }
+    } catch {}
+  });
 }

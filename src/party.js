@@ -164,6 +164,10 @@ export function socketInit() {
       renderPartyMembers(data);
       // Re-bind ready toggle on your slot after DOM updates
       initReadyToggle();
+      // Ensure the bottom Ready button reflects current user's status
+      try {
+        syncReadyButtonFromSelfSlot();
+      } catch (_) {}
     } catch (e) {
       console.warn("[socket] party:members render failed", e);
     }
@@ -183,6 +187,16 @@ export function socketInit() {
       if (text === evt.name || text === `${evt.name} (You)`) {
         statusEl.textContent = evt.status || "Not Ready";
         statusEl.className = `status ${statusToClass(evt.status)}`;
+        // If this status belongs to current user, reflect it on the Ready button
+        const currentUserName =
+          document.getElementById("username-text")?.textContent || "";
+        const isSelf = evt.name === currentUserName;
+        if (isSelf) {
+          const isReady = String(evt.status || "")
+            .toLowerCase()
+            .includes("ready");
+          setReadyButtonState(!!isReady);
+        }
       }
     }
   });
@@ -295,6 +309,8 @@ export function socketInit() {
         statusEl.textContent = "online";
         statusEl.className = "status online";
       }
+      // Reset bottom Ready button
+      setReadyButtonState(false);
     } catch (_) {}
   });
 
@@ -317,6 +333,7 @@ export function socketInit() {
         statusEl.textContent = "online";
         statusEl.className = "status online";
       }
+      setReadyButtonState(false);
     } catch {}
   });
 
@@ -881,6 +898,8 @@ export function initReadyToggle() {
     // Optimistic local update
     statusEl.textContent = nextReady ? "Ready" : "online";
     statusEl.className = `status ${nextReady ? "ready" : "online"}`;
+    // Update Ready button appearance/label
+    setReadyButtonState(nextReady);
 
     if (partyId) {
       // Party flow: server will show overlay when all ready
@@ -1025,6 +1044,31 @@ function wireCancelButton() {
         statusEl.textContent = "online";
         statusEl.className = "status online";
       }
+      setReadyButtonState(false);
     } catch {}
   });
+}
+
+// ---------------------------
+// Ready button helpers
+// ---------------------------
+function setReadyButtonState(isCancel) {
+  const btn = document.getElementById("ready");
+  if (!btn) return;
+  // Input[type=submit] uses value for its label
+  btn.value = isCancel ? "Cancel" : "Ready";
+  if (isCancel) btn.classList.add("cancel");
+  else btn.classList.remove("cancel");
+}
+
+function syncReadyButtonFromSelfSlot() {
+  const selfSlot = Array.from(document.querySelectorAll(".character-slot")).find(
+    (s) => s.dataset.isCurrentUser === "true"
+  );
+  const statusEl = selfSlot?.querySelector(".status");
+  if (!statusEl) return;
+  const isReady = (statusEl.textContent || "")
+    .toLowerCase()
+    .includes("ready");
+  setReadyButtonState(isReady);
 }

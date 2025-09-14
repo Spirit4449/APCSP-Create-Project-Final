@@ -493,6 +493,16 @@ h3 {
   box-shadow: 0 6px 20px rgba(234, 200, 9, 0.6);
 }
 
+/* Cancel (red) visual state for Ready button */
+#ready.cancel {
+  background: linear-gradient(135deg, #ff4757, #dc3545);
+  box-shadow: 0 4px 15px rgba(255, 71, 87, 0.45);
+}
+#ready.cancel:hover {
+  background: linear-gradient(135deg, #dc3545, #c82333);
+  box-shadow: 0 6px 20px rgba(255, 71, 87, 0.65);
+}
+
 #username-text {
   margin-right: 10px;
 }
